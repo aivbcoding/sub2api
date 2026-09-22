@@ -249,6 +249,42 @@ const server = createServer(async (req, res) => {
     if (!Array.isArray(body.messages)) {
       return send(res, 400, { error: { message: 'messages is required', type: 'invalid_request_error' } });
     }
+    // 带 tools 的请求 -> 返回(并行两个)工具调用, 用于验证流式协议转换的 tool_calls 链路
+    if (Array.isArray(body.tools) && body.tools.length) {
+      const tc = (i, fn) => JSON.stringify({
+        id: 'c1', object: 'chat.completion.chunk', model: body.model,
+        choices: [{ index: 0, delta: { tool_calls: [fn] } }],
+      });
+      if (body.stream) {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'text/event-stream');
+        // 并行两个工具: read_file(0) + list_dir(1), arguments 分片发出
+        res.write(tc(0, { id: 'call_a', index: 0, type: 'function', function: { name: 'read_file', arguments: '' } }) + '\n\n');
+        res.write(tc(1, { id: null, index: 0, type: 'function', function: { name: null, arguments: '{"ta' } }) + '\n\n');
+        res.write(tc(2, { id: null, index: 0, type: 'function', function: { name: null, arguments: 'rget_file": "a.vue"}' } }) + '\n\n');
+        res.write(tc(3, { id: 'call_b', index: 1, type: 'function', function: { name: 'list_dir', arguments: '' } }) + '\n\n');
+        res.write(tc(4, { id: null, index: 1, type: 'function', function: { name: null, arguments: '{"path": "src"}' } }) + '\n\n');
+        res.write(`data: ${JSON.stringify({ id: 'c1', object: 'chat.completion.chunk', model: body.model, choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 3, completion_tokens: 9, total_tokens: 12 } })}\n\n`);
+        res.write('data: [DONE]\n\n');
+        res.end();
+        return;
+      }
+      return send(res, 200, {
+        id: 'c1', object: 'chat.completion', model: body.model,
+        choices: [{
+          index: 0,
+          message: {
+            role: 'assistant', content: '',
+            tool_calls: [
+              { id: 'call_a', index: 0, type: 'function', function: { name: 'read_file', arguments: '{"target_file": "a.vue"}' } },
+              { id: 'call_b', index: 1, type: 'function', function: { name: 'list_dir', arguments: '{"path": "src"}' } },
+            ],
+          },
+          finish_reason: 'tool_calls',
+        }],
+        usage: { prompt_tokens: 3, completion_tokens: 9, total_tokens: 12 },
+      });
+    }
     const text = 'openai-ok:' + JSON.stringify(body.messages.at(-1)?.content ?? '');
     if (body.stream) {
       res.statusCode = 200;

@@ -68,8 +68,8 @@ export interface CanonDelta {
     cacheRead?: number;
     cacheCreation?: number;
   };
-  /** 工具调用增量 (best-effort) */
-  toolCall?: { index: number; id?: string; name?: string; argumentsDelta?: string };
+  /** 工具调用增量 (一条 SSE 里可能带多个工具的分片) */
+  toolCalls?: { index: number; id?: string; name?: string; argumentsDelta?: string }[];
   /** 是否流结束 */
   done?: boolean;
 }
@@ -562,9 +562,31 @@ function canonicalToOpenaiChat(c: CanonRequest): Record<string, unknown> {
         parameters: t.parameters ?? { type: 'object', properties: {} },
       },
     }));
-    out['tool_choice'] = c.tool_choice ?? 'auto';
+    // tool_choice 归一化: Anthropic 客户端(Claude Code 等)发的是 {type:"auto"/"any"/"tool"}
+    // 这种 Anthropic 形状, 直接透传给 OpenAI 上游属于非法值(会被忽略或 400)。
+    out['tool_choice'] = normalizeToolChoiceForOpenai(c.tool_choice);
   }
   return out;
+}
+
+/** tool_choice -> OpenAI 合法形状 (字符串 或 {type:'function',function:{name}}) */
+function normalizeToolChoiceForOpenai(tc: unknown): string | Record<string, unknown> {
+  if (tc === undefined || tc === null) return 'auto';
+  if (typeof tc === 'string') {
+    return tc === 'auto' || tc === 'none' || tc === 'required' ? tc : 'auto';
+  }
+  if (isObj(tc)) {
+    const type = str(tc['type']);
+    if (type === 'auto') return 'auto';
+    if (type === 'any') return 'required'; // Anthropic any = 必须调用某个工具
+    if (type === 'tool') {
+      const name = str(tc['name']);
+      return name ? { type: 'function', function: { name } } : 'required';
+    }
+    // 已是 OpenAI 形状 {type:'function', function:{name}} 则原样放行
+    if (type === 'function' && isObj(tc['function'])) return tc;
+  }
+  return 'auto';
 }
 
 function canonicalToAnthropic(c: CanonRequest): Record<string, unknown> {
@@ -1234,14 +1256,31 @@ export function createSseTranslator(from: WireFormat, to: WireFormat, model: str
   if (from === to) return null;
 
   let started = false;
-  let blockOpen = false;
   let finishSent = false;
   let usage: RespParts['usage'] = {};
   const id = 'msg_' + Date.now().toString(36);
   const created = Math.floor(Date.now() / 1000);
 
+  // ---- 内容块状态 (anthropic 目标需要严格的开/关块协议) ----
+  let nextIndex = 0;                                  // 下一个分配的内容块索引
+  let textBlock: number | null = null;                // 当前打开的 text 块索引
+  const toolBlocks = new Map<number, number>();       // 工具序号 -> 块索引
+  // ---- 累积式目标的工具收集 (gemini / openai-responses 没有增量工具协议) ----
+  const accTools = new Map<number, { id: string; name: string; args: string }>();
+
   const sse = (obj: unknown, event?: string): string =>
     (event ? `event: ${event}\n` : '') + `data: ${JSON.stringify(obj)}\n\n`;
+
+  /** 收集工具增量到累积表 (gemini / openai-responses 目标用) */
+  const accumulate = (tcs: NonNullable<CanonDelta['toolCalls']>) => {
+    for (const tc of tcs) {
+      const cur = accTools.get(tc.index) ?? { id: '', name: '', args: '' };
+      if (tc.id) cur.id = tc.id;
+      if (tc.name) cur.name = tc.name;
+      if (tc.argumentsDelta) cur.args += tc.argumentsDelta;
+      accTools.set(tc.index, cur);
+    }
+  };
 
   return {
     /** 处理上游一行 SSE; 返回要写给客户端的字节 (可能为空串) */
@@ -1267,7 +1306,7 @@ export function createSseTranslator(from: WireFormat, to: WireFormat, model: str
 
       const delta = parseDelta(from, obj);
       if (delta.usage) usage = { ...usage, ...delta.usage };
-      if (!delta.text && !delta.finish && !delta.toolCall && !delta.usage && !delta.done) return '';
+      if (!delta.text && !delta.finish && !delta.toolCalls?.length && !delta.usage && !delta.done) return '';
 
       let out = '';
 
@@ -1292,24 +1331,60 @@ export function createSseTranslator(from: WireFormat, to: WireFormat, model: str
           );
         }
         if (delta.text) {
-          if (!blockOpen) {
-            blockOpen = true;
+          if (textBlock === null) {
+            textBlock = nextIndex++;
             out += sse(
-              { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+              { type: 'content_block_start', index: textBlock, content_block: { type: 'text', text: '' } },
               'content_block_start',
             );
           }
           out += sse(
-            { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: delta.text } },
+            { type: 'content_block_delta', index: textBlock, delta: { type: 'text_delta', text: delta.text } },
             'content_block_delta',
           );
         }
+        // 工具调用: 首个分片(带 id/name)开新块, 后续分片只发 input_json_delta
+        if (delta.toolCalls?.length) {
+          for (const tc of delta.toolCalls) {
+            if (!toolBlocks.has(tc.index)) {
+              // 内容块串行: 开工具块前先关掉正打开的 text 块
+              if (textBlock !== null) {
+                out += sse({ type: 'content_block_stop', index: textBlock }, 'content_block_stop');
+                textBlock = null;
+              }
+              const bi = nextIndex++;
+              toolBlocks.set(tc.index, bi);
+              out += sse(
+                {
+                  type: 'content_block_start',
+                  index: bi,
+                  content_block: { type: 'tool_use', id: tc.id || `call_${bi}`, name: tc.name || '', input: {} },
+                },
+                'content_block_start',
+              );
+            }
+            if (tc.argumentsDelta) {
+              out += sse(
+                {
+                  type: 'content_block_delta',
+                  index: toolBlocks.get(tc.index) ?? 0,
+                  delta: { type: 'input_json_delta', partial_json: tc.argumentsDelta },
+                },
+                'content_block_delta',
+              );
+            }
+          }
+        }
         if (delta.finish && !finishSent) {
           finishSent = true;
-          if (blockOpen) {
-            out += sse({ type: 'content_block_stop', index: 0 }, 'content_block_stop');
-            blockOpen = false;
+          if (textBlock !== null) {
+            out += sse({ type: 'content_block_stop', index: textBlock }, 'content_block_stop');
+            textBlock = null;
           }
+          for (const bi of toolBlocks.values()) {
+            out += sse({ type: 'content_block_stop', index: bi }, 'content_block_stop');
+          }
+          toolBlocks.clear();
           out += sse(
             {
               type: 'message_delta',
@@ -1324,12 +1399,24 @@ export function createSseTranslator(from: WireFormat, to: WireFormat, model: str
       }
 
       if (to === 'gemini') {
+        if (delta.toolCalls?.length) accumulate(delta.toolCalls);
         if (delta.finish && !finishSent) {
           finishSent = true;
+          // Gemini 没有增量工具协议: 累积完后在收尾一次性吐 functionCall parts
+          const parts: Record<string, unknown>[] = [];
+          for (const t of accTools.values()) {
+            let args: unknown = {};
+            try {
+              args = JSON.parse(t.args || '{}');
+            } catch {
+              args = {};
+            }
+            parts.push({ functionCall: { name: t.name, args } });
+          }
           return sse({
             candidates: [
               {
-                content: { parts: [{ text: '' }], role: 'model' },
+                content: { parts: parts.length ? parts : [{ text: '' }], role: 'model' },
                 finishReason: finishFor('gemini', delta.finish),
                 index: 0,
               },
@@ -1352,6 +1439,7 @@ export function createSseTranslator(from: WireFormat, to: WireFormat, model: str
       }
 
       if (to === 'openai-responses') {
+        if (delta.toolCalls?.length) accumulate(delta.toolCalls);
         if (!started) {
           started = true;
           out += sse({ type: 'response.created', response: { id, model, status: 'in_progress' } });
@@ -1361,12 +1449,58 @@ export function createSseTranslator(from: WireFormat, to: WireFormat, model: str
         }
         if (delta.finish && !finishSent) {
           finishSent = true;
+          // openai-responses 的工具以完整 output_item 形式在收尾时吐出
+          let oi = 0;
+          for (const t of accTools.values()) {
+            out += sse({
+              type: 'response.output_item.done',
+              output_index: oi++,
+              item: {
+                type: 'function_call',
+                id: t.id || `fc_${oi}`,
+                call_id: t.id || `call_${oi}`,
+                name: t.name,
+                arguments: t.args || '{}',
+                status: 'completed',
+              },
+            });
+          }
           out += sse({ type: 'response.completed', response: { id, model, status: 'completed' } });
         }
         return out;
       }
 
       // openai-chat
+      if (delta.text) {
+        out += sse({
+          id: 'chatcmpl-' + id,
+          object: 'chat.completion.chunk',
+          created,
+          model,
+          choices: [{ index: 0, delta: { content: delta.text } }],
+        });
+      }
+      if (delta.toolCalls?.length) {
+        out += sse({
+          id: 'chatcmpl-' + id,
+          object: 'chat.completion.chunk',
+          created,
+          model,
+          choices: [{
+            index: 0,
+            delta: {
+              tool_calls: delta.toolCalls.map((tc) => {
+                const fn: Record<string, unknown> = {};
+                if (tc.name) fn['name'] = tc.name;
+                if (tc.argumentsDelta !== undefined) fn['arguments'] = tc.argumentsDelta;
+                const entry: Record<string, unknown> = { index: tc.index, type: 'function', function: fn };
+                if (tc.id) entry['id'] = tc.id;
+                return entry;
+              }),
+            },
+          }],
+        });
+      }
       if (delta.finish && !finishSent) {
         finishSent = true;
         out += sse({
@@ -1390,16 +1524,8 @@ export function createSseTranslator(from: WireFormat, to: WireFormat, model: str
             },
           });
         }
-        return out;
       }
-      if (!delta.text) return '';
-      return sse({
-        id: 'chatcmpl-' + id,
-        object: 'chat.completion.chunk',
-        created,
-        model,
-        choices: [{ index: 0, delta: { content: delta.text } }],
-      });
+      return out;
     },
   };
 }
@@ -1410,11 +1536,20 @@ function parseDelta(from: WireFormat, o: Record<string, unknown>): CanonDelta {
 
   if (from === 'anthropic') {
     const t = String(o['type'] ?? '');
-    if (t === 'content_block_delta') {
+    if (t === 'content_block_start') {
+      const block = isObj(o['content_block']) ? (o['content_block'] as Record<string, unknown>) : {};
+      if (block['type'] === 'tool_use') {
+        d.toolCalls = [{
+          index: num(o['index']) ?? 0,
+          id: str(block['id']) || undefined,
+          name: str(block['name']) || undefined,
+        }];
+      }
+    } else if (t === 'content_block_delta') {
       const delta = isObj(o['delta']) ? (o['delta'] as Record<string, unknown>) : {};
       if (delta['type'] === 'text_delta') d.text = str(delta['text']);
       else if (delta['type'] === 'input_json_delta') {
-        d.toolCall = { index: 0, argumentsDelta: str(delta['partial_json']) };
+        d.toolCalls = [{ index: num(o['index']) ?? 0, argumentsDelta: str(delta['partial_json']) }];
       }
     } else if (t === 'message_delta') {
       const delta = isObj(o['delta']) ? (o['delta'] as Record<string, unknown>) : {};
@@ -1473,16 +1608,20 @@ function parseDelta(from: WireFormat, o: Record<string, unknown>): CanonDelta {
     if (typeof delta['content'] === 'string' && delta['content']) d.text = delta['content'];
     if (first['finish_reason']) d.finish = normFinish(first['finish_reason']);
     if (Array.isArray(delta['tool_calls'])) {
-      const tc = delta['tool_calls'][0];
-      if (isObj(tc)) {
-        const fn = isObj(tc['function']) ? (tc['function'] as Record<string, unknown>) : {};
-        d.toolCall = {
-          index: num(tc['index']) ?? 0,
-          id: str(tc['id']) || undefined,
+      // 一条 chunk 里可能带多个工具的增量(并行调用), 必须全量收集;
+      // 之前只取 [0] 会把并行工具调用的后续分片整包丢掉。
+      const tcs: NonNullable<CanonDelta['toolCalls']> = [];
+      for (const raw of delta['tool_calls'] as unknown[]) {
+        if (!isObj(raw)) continue;
+        const fn = isObj(raw['function']) ? (raw['function'] as Record<string, unknown>) : {};
+        tcs.push({
+          index: num(raw['index']) ?? 0,
+          id: str(raw['id']) || undefined,
           name: str(fn['name']) || undefined,
           argumentsDelta: str(fn['arguments']) || undefined,
-        };
+        });
       }
+      if (tcs.length) d.toolCalls = tcs;
     }
   }
   const u = isObj(o['usage']) ? (o['usage'] as Record<string, unknown>) : null;

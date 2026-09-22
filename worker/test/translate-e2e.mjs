@@ -457,6 +457,95 @@ async function main() {
     );
   }
 
+  // ---------- 12. Anthropic 客户端(Claude Code) -> OpenAI 上游: 流式工具调用 ----------
+  // 背景: createSseTranslator 的 anthropic 写出器原来完全没实现 tool_use 块,
+  //       Claude Code 收到 stop_reason=tool_use 却没有工具块 -> "tool call could not be parsed"
+  console.log('\n[12] Anthropic 客户端 -> OpenAI 上游: 流式 tool_calls (Claude Code 场景)');
+  {
+    const r = await postStream('/v1/messages', {
+      model: 'gpt-4o',
+      max_tokens: 64,
+      stream: true,
+      system: 'use tools',
+      messages: [{ role: 'user', content: 'read the file' }],
+      tools: [
+        { name: 'read_file', description: 'read a file', input_schema: { type: 'object', properties: { target_file: { type: 'string' } }, required: ['target_file'] } },
+        { name: 'list_dir', description: 'list a dir', input_schema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } },
+      ],
+      tool_choice: { type: 'auto' },
+    });
+    check('流式 200', r.status === 200, `status=${r.status} ${r.text.slice(0, 200)}`);
+    const types = r.events.map((e) => String(e['type'] ?? ''));
+    check('含 message_start', types.includes('message_start'), types.join(','));
+    // 关键: 必须有 tool_use 内容块
+    const blockStarts = r.events.filter((e) => e['type'] === 'content_block_start');
+    const toolStarts = blockStarts.filter(
+      (e) => e['content_block']?.['type'] === 'tool_use',
+    );
+    check('content_block_start 存在 tool_use 块', toolStarts.length === 2, JSON.stringify(blockStarts.map((e) => e['content_block'])));
+    check('tool_use 块带 id/name', toolStarts.every((e) => e['content_block']?.['id'] && e['content_block']?.['name']), JSON.stringify(toolStarts));
+    // 关键: 参数分片必须以 input_json_delta 流出且拼起来是合法 JSON
+    const jsonDeltas = r.events.filter((e) => e['type'] === 'content_block_delta' && e['delta']?.['type'] === 'input_json_delta');
+    check('input_json_delta 分片存在', jsonDeltas.length >= 4, `deltas=${jsonDeltas.length}`);
+    const byIndex = new Map();
+    for (const e of jsonDeltas) {
+      const i = e['index'];
+      if (!byIndex.has(i)) byIndex.set(i, '');
+      byIndex.set(i, byIndex.get(i) + String(e['delta']?.['partial_json'] ?? ''));
+    }
+    let argsOk = byIndex.size === 2;
+    for (const [, v] of byIndex) {
+      try {
+        const p = JSON.parse(v);
+        if (!p || !Object.keys(p).length) argsOk = false;
+      } catch {
+        argsOk = false;
+      }
+    }
+    check('两个工具的 arguments 拼接后均为合法 JSON', argsOk, JSON.stringify([...byIndex.entries()]));
+    check(
+      '参数内容正确 (target_file / path)',
+      (byIndex.get(0) ?? '').includes('a.vue') && (byIndex.get(1) ?? '').includes('src'),
+      JSON.stringify([...byIndex.entries()]),
+    );
+    check('message_delta stop_reason=tool_use', r.text.includes('"stop_reason":"tool_use"'), r.text.slice(-200));
+    check('所有内容块都已关闭', r.text.match(/content_block_stop/g)?.length === blockStarts.length, `starts=${blockStarts.length} stops=${r.text.match(/content_block_stop/g)?.length}`);
+  }
+
+  // ---------- 13. 同场景非流式 (回归) ----------
+  console.log('\n[13] Anthropic 客户端 -> OpenAI 上游: 非流式 tool_use (回归)');
+  {
+    const r = await post('/v1/messages', {
+      model: 'gpt-4o',
+      max_tokens: 64,
+      messages: [{ role: 'user', content: 'read the file' }],
+      tools: [
+        { name: 'read_file', description: 'read a file', input_schema: { type: 'object', properties: { target_file: { type: 'string' } } } },
+      ],
+    });
+    check('非流式 200', r.status === 200, `status=${r.status} ${r.text.slice(0, 200)}`);
+    const content = Array.isArray(r.json['content']) ? r.json['content'] : [];
+    const tu = content.find((c) => c['type'] === 'tool_use');
+    check('content 含 tool_use 块', !!tu, JSON.stringify(content));
+    check('tool_use.input 已解析为对象', tu && typeof tu['input'] === 'object' && tu['input']?.['target_file'] === 'a.vue', JSON.stringify(tu));
+    check('stop_reason === tool_use', r.json['stop_reason'] === 'tool_use', String(r.json['stop_reason']));
+  }
+
+  // ---------- 14. OpenAI 客户端 -> Anthropic 上游: 流式工具调用回带 ----------
+  console.log('\n[14] OpenAI 客户端 -> Anthropic 上游: 流式 tool_calls (反向回归)');
+  {
+    // mock 的 /v1/messages 流式只发文本; 此用例验证文本链路不回归即可
+    const r = await postStream('/v1/chat/completions', {
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 64,
+      stream: true,
+      messages: [{ role: 'user', content: 'stream-tools' }],
+      tools: [{ type: 'function', function: { name: 'f', description: 'd', parameters: { type: 'object', properties: {} } } }],
+    });
+    check('流式 200 (带 tools 不崩)', r.status === 200, `status=${r.status} ${r.text.slice(0, 200)}`);
+    check('文本 delta 正常', r.text.includes('chat.completion.chunk'), r.text.slice(0, 200));
+  }
+
   console.log(`\n=== 结果: ${pass} passed, ${fail} failed ===\n`);
   process.exit(fail > 0 ? 1 : 0);
 }
