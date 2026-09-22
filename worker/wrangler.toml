@@ -1,0 +1,47 @@
+name = "sub2api-worker"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ============================================================
+# sub2api -> Cloudflare Workers 移植版 (方案 C / MVP 骨架)
+# 上游项目: https://github.com/Wei-Shaw/sub2api  (LGPL-3.0)
+# ============================================================
+
+# ---- D1: 替代 PostgreSQL 15+ ----
+[[d1_databases]]
+binding = "DB"
+database_name = "sub2api"
+database_id = "33738e04-4b5e-44a7-a85a-357fd1f82db6"
+
+# ---- KV: 替代 Redis 的 缓存/最终一致场景 ----
+[[kv_namespaces]]
+binding = "KV"
+id = "7d8d6f01841f4f70a4e1f10e678f7e58"
+
+# ---- Durable Object: 替代 Redis 的 原子计数/粘性会话/并发槽位 ----
+[[durable_objects.bindings]]
+name = "ACCOUNT_COORDINATOR"
+class_name = "AccountCoordinator"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["AccountCoordinator"]
+
+[vars]
+# 非敏感配置。敏感值请用 `wrangler secret put XXX`
+API_KEY_PREFIX = "sk-"
+# 允许的 CORS 来源，逗号分隔；* 表示全部
+CORS_ALLOWED_ORIGINS = "*"
+# 是否强依赖余额（true 时 balance<=0 直接 403 INSUFFICIENT_BALANCE）
+ENFORCE_BALANCE = "true"
+# 是否强制要求官方安全策略
+ALLOW_INSECURE_HTTP = "false"
+# GET /v1/models 列表模式:
+#   auto     = 聚合各上游模型的真实列表(失败时回退到分组白名单/定价表) —— 默认
+#   local    = 完全离线, 只返回分组白名单/定价表里的模型, 不打上游
+#   upstream = 透传第一个可用上游的原生响应(不做聚合与统一)
+MODELS_LIST_MODE = "auto"
+
+[observability]
+enabled = true
