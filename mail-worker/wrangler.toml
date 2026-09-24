@@ -1,0 +1,23 @@
+name = "sub2api-mail-worker"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+# 发件人显示名/地址。不配则用默认 Sub2API / noreply@example.com（example.com 未验证会发信失败）
+MAIL_FROM_NAME = "Sub2API"
+MAIL_FROM_ADDR = "noreply@ijd.ccwu.cc"
+
+# ============================================================
+# Sub2API 邮件网关 Worker
+#
+# 安全(严格最小化):
+#   - 只被 Sub2API 主站调用(Authorization: Bearer SUB2API_WORKER_SECRET)
+#   - 参数白名单(request_id / to / code / purpose / expire_minutes)
+#   - 固定模板, 不支持任意 subject / html / from
+#   - request_id 作为 Resend 幂等键, 防止重复邮件
+#
+# 部署前必须设置 Secret:
+#   wrangler secret put SUB2API_WORKER_SECRET   (与主站 MAIL_WORKER_SECRET 一致)
+#   wrangler secret put RESEND_API_KEY          (Resend 服务端密钥, 绝不放前端)
+# ============================================================

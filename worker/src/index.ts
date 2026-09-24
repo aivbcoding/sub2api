@@ -40,6 +40,7 @@ import {
   verifyPassword,
 } from './admin-auth';
 import { handleAdminApi, handleRegister, getRegisterConfig } from './admin-api';
+import { sendVerifyCode } from './verify-code';
 import { renderAdminPage } from './admin-ui';
 
 export { AccountCoordinator } from './durable-object';
@@ -66,7 +67,6 @@ const CONSOLE_PAGES = new Set([
   'mykeys',
   'keys',
   'accounts',
-  'aliases',
   'groups',
   'users',
   'models',
@@ -151,6 +151,14 @@ export default {
         }
       }
       return renderAdminPage();
+    }
+
+    // ---- 邮箱验证码 (公开, 不需要会话) ----
+    // 必须在 /api/admin/* 之前: handleAdminRequest 只有在 /api/admin* 下才会被调用,
+    // 而 send-verify-code 的路由在 handleAdminRequest 内部, 路径是 /api/auth/*,
+    // 不提前转发就永远 404。
+    if (pathname === '/api/auth/send-verify-code') {
+      return handleAdminRequest(request, env, pathname);
     }
 
     // ---- 后台 API ----
@@ -335,6 +343,32 @@ async function handleAdminRequest(request: Request, env: never, pathname: string
       return handleRegister(e, body, request);
     }
     return adminJson({ error: { message: 'Method not allowed.' } }, 405);
+  }
+
+  // ---- 发送邮箱验证码 (公开, 不需要会话) ----
+  // 前置验证码能力(邮箱注册/密码重置/邮箱绑定共用)。
+  // 校验 + 限流 + 状态机都在 verify-code.ts, 这里只是路由。
+  if (pathname === '/api/auth/send-verify-code') {
+    if (method !== 'POST') {
+      return adminJson({ error: { message: 'Method not allowed.' } }, 405);
+    }
+    let body: { email?: string; purpose?: string; turnstile_token?: string };
+    try {
+      body = (await request.json()) as { email?: string; purpose?: string; turnstile_token?: string };
+    } catch {
+      return adminJson({ error: { message: 'Invalid JSON body.' } }, 400);
+    }
+    const result = await sendVerifyCode(
+      e,
+      String(body.email ?? ''),
+      String(body.purpose ?? ''),
+      body.turnstile_token,
+      request,
+    );
+    return adminJson(
+      result.ok ? { ok: true, message: result.message, ...(result.debug_code ? { debug_code: result.debug_code } : {}) } : { error: { message: result.message } },
+      result.status,
+    );
   }
 
   // ---- 其余: 需会话 + 菜单权限(权限在 handleAdminApi 里逐资源判定) ----

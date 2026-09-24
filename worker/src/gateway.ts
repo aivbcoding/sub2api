@@ -351,15 +351,15 @@ export function inferPlatform(
   return 'openai';
 }
 
-/** 加载 D1 模型定价表 */
+/** 加载 D1 模型定价表 -> Map<accountId:model, ModelPrice> (accountId=0 为全局) */
 async function loadDbPricing(env: Env): Promise<Map<string, ModelPrice>> {
   const map = new Map<string, ModelPrice>();
   try {
     const res = await env.DB.prepare(
-      `SELECT model, input_price, output_price, cache_read_price, cache_creation_price FROM model_pricing`,
-    ).all<ModelPrice & { model: string }>();
+      `SELECT account_id, model, input_price, output_price, cache_read_price, cache_creation_price FROM model_pricing`,
+    ).all<ModelPrice & { account_id: number; model: string }>();
     for (const r of res.results ?? []) {
-      map.set(r.model, {
+      map.set(`${Number(r.account_id)}:${r.model}`, {
         input_price: Number(r.input_price),
         output_price: Number(r.output_price),
         cache_read_price: Number(r.cache_read_price),
@@ -954,7 +954,7 @@ export async function handleGateway(
     loadDbPricing(env),
     loadDefaultPrice(env),
   ]);
-  const price = resolveModelPrice(model, dbPricing, defaultPrice);
+  const price = resolveModelPrice(model, account.id, dbPricing, defaultPrice);
   const rateMultiplier = combineRateMultiplier(
     ctx.groupRateMultiplier,
     account.rate_multiplier,
@@ -1060,9 +1060,17 @@ export async function handleGateway(
  * 哪些模型"的语义, 不是"允许哪些字节序列", 所以不该因为大小写把请求挡掉。
  */
 function isModelAllowed(allowlist: string[], model: string): boolean {
-  if (allowlist.includes(model)) return true;
+  // 2026-09-24: 白名单条目新增 '平台::模型' 复合形态(后台「模型关联」按平台
+  // 保存, 唯一 id = 平台::模型)。请求侧校验只关心"这个模型名允不允许", 平台
+  // 维度由 /v1/models 的列表过滤处理 —— 这里剥掉前缀再比对, 保证将来重新
+  // 启用白名单(GROUP_ALLOWLIST_ENABLED=true)时复合条目不会把请求全挡掉。
   const want = model.toLowerCase();
-  return allowlist.some((m) => m.toLowerCase() === want);
+  return allowlist.some((m) => {
+    const s = String(m || '');
+    const i = s.indexOf('::');
+    const name = i > 0 ? s.slice(i + 2) : s;
+    return name.trim().toLowerCase() === want;
+  });
 }
 
 /**

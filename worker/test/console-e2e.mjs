@@ -186,9 +186,11 @@ async function main() {
       JSON.stringify(builtin.find((r) => r.code === 'user')?.menus));
     check('内置角色 user 不含数据看板 board(默认只归管理员)',
       !(builtin.find((r) => r.code === 'user')?.menus ?? []).includes('board'));
-    check('回传 menu_catalog 供前端渲染勾选框', Array.isArray(roles0.json.menu_catalog) && roles0.json.menu_catalog.length >= 17,
+    // 2026-09-24: 独立「模型别名」菜单并入「模型定价」, catalog 从 17 -> 16
+    check('回传 menu_catalog 供前端渲染勾选框', Array.isArray(roles0.json.menu_catalog) && roles0.json.menu_catalog.length >= 16,
       `len=${(roles0.json.menu_catalog ?? []).length}`);
     const menuKeys = (roles0.json.menu_catalog ?? []).map((m) => m.key);
+    check('menu_catalog 不再含独立别名菜单(已并入模型定价)', !menuKeys.includes('aliases'));
     check('menu_catalog 含新增四个菜单(overview/board/logs/profile)',
       ['overview', 'board', 'logs', 'profile'].every((k) => menuKeys.includes(k)),
       JSON.stringify(menuKeys));

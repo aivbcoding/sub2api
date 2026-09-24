@@ -30,15 +30,18 @@ try {
   // 2026-09-22: 「模型获取」页并入「模型定价」页(标签页 别名 / 定价), discover 菜单已摘除
   ok(!html.includes('data-page="discover"'), '导航已无 data-page="discover"(模型获取页已合并)');
   ok(/PAGES\.discover\s*=/.test(html) === false, 'PAGES.discover 页面函数已移除');
-  ok(html.includes('data-page="aliases"'), '导航含 data-page="aliases"');
-  ok(html.includes('模型获取与定价'), '页面含合并后的「模型获取与定价」标题');
-  ok(html.includes('获取平台模型别名'), '页面含「获取平台模型别名」标题');
+  // 2026-09-24: 独立「模型别名」菜单也并入「模型定价」页的「别名」标签
+  ok(!html.includes('data-page="aliases"'), '导航已无独立 data-page="aliases"(别名菜单已并入模型定价)');
+  ok(html.includes('模型管理'), '页面含合并后的「模型管理」标题');
+  ok(html.includes('自行新增别名') && html.includes('从上游获取并批量新增'),
+    '「模型别名」标签含 ①自行新增 ②从上游获取 两块');
+  ok(!/PAGES\.aliases\s*=/.test(html), 'PAGES.aliases 独立页面函数已移除');
   ok(html.includes('function suggestAlias'), '含 suggestAlias(平台名+模型ID 规范)');
   ok(html.includes('d-alias'), '含模型获取表格的别名输入框');
   ok(html.includes('al-alias'), '含别名编辑弹窗的输入框');
 
   // ---- 合并页: 标签页切换「别名 / 定价」 ----
-  ok(html.includes('class="page-tabs"'), '有标签页容器 .page-tabs');
+  ok(html.includes('class="page-tabs sticky"'), '有标签页容器 .page-tabs(吸顶)');
   ok(html.includes('data-mtab="alias"') && html.includes('data-mtab="price"'),
     '标签项是 别名 / 定价 两个(data-mtab)');
   ok(html.includes('function modelsAliasView'), '别名视图渲染函数 modelsAliasView 已上线');
@@ -74,7 +77,7 @@ try {
   // ---- 账号级别的别名编辑已收敛到「模型别名」页 ----
   // 账号编辑窗口里再放一份 textarea, 保存时提交 model_aliases 会被后端当作
   // "整表替换", 一不小心就把该账号已有别名清空。所以只保留菜单页一个入口。
-  ok(html.indexOf('a-aliases') === -1, '账号表单已移除「模型别名」编辑框(改由「模型别名」页统一管理)');
+  ok(html.indexOf('a-aliases') === -1, '账号表单已移除「模型别名」编辑框(改由「模型定价→别名」标签统一管理)');
 
   // ---- 弹窗: 标题与按钮固定, 只有内容区滚动 ----
   ok(
@@ -302,7 +305,8 @@ try {
   ok(/\.nav-group::before\s*\{/.test(html), '侧栏分组标题有装饰竖条');
   // 图标必须走 CSS ::before(写进 HTML 会破坏 data-page>标签 的守卫断言)
   ok(/\.nav-item::before\s*\{/.test(html), '菜单图标走 CSS ::before(不写进 HTML)');
-  ok((html.match(/\.nav-item\[data-page="[a-z0-9_-]+"\]::before/g) || []).length >= 17,
+  // 2026-09-24: aliases 菜单并入模型定价, 图标规则从 17 -> 16
+  ok((html.match(/\.nav-item\[data-page="[a-z0-9_-]+"\]::before/g) || []).length >= 16,
     '每个侧栏菜单项都配了图标');
 
   // ---- 右侧内容区美化(2026-09-21) ----

@@ -196,50 +196,129 @@ check('旧的 discover 页面已彻底摘除(侧栏/PAGE_TITLES/PAGES 函数)',
   !/data-page="discover"/.test(html) && !/\bdiscover:\s*'/.test(inline) && !/PAGES\.discover\s*=/.test(inline));
 
 const aliasStart = inline.indexOf('function modelsAliasView');
-const aliasEnd = inline.indexOf('function flattenAliases');
+const aliasEnd = inline.indexOf('// ===================== 别名设置');
 const aliasBody = aliasStart === -1 || aliasEnd === -1 ? '' : inline.slice(aliasStart, aliasEnd);
 check('存在 modelsAliasView()', aliasBody.length > 300, 'len=' + aliasBody.length);
 check('别名视图渲染到 #models-body(不是整个 #main)', aliasBody.includes("$('#models-body').innerHTML"));
 check('面板正文套了 .panel-body', aliasBody.includes('<div class="panel-body">'));
-const titleIdx = aliasBody.indexOf('从上游拉取真实模型列表');
-const bodyIdx = aliasBody.indexOf('<div class="panel-body">');
-const selectIdx = aliasBody.indexOf('id="d-acct"');
-check('panel-body 位于标题与表单之间', titleIdx !== -1 && bodyIdx > titleIdx && selectIdx > bodyIdx,
-  `title=${titleIdx} body=${bodyIdx} select=${selectIdx}`);
-check('结果区用 .result-body', aliasBody.includes('class="result-body"'));
-check('按钮组用 .panel-actions', aliasBody.includes('class="panel-actions"'));
+// 2026-09-25: 「别名列表」独立标签页 —— 只有扁平表(新增/编辑/删除),
+// 「从上游获取」已拆到「别名设置」标签(modelsAliasFetchView)
+check('别名列表只有扁平表 + 新增按钮', aliasBody.includes('btn-new-alias') && aliasBody.includes('别名列表'));
+check('别名列表不再包含「从上游获取」面板', !aliasBody.includes('从上游获取并批量新增') && !aliasBody.includes('id="d-acct"'));
+
+// 别名设置(从上游获取)标签页
+const fetchStart = inline.indexOf('function modelsAliasFetchView');
+const fetchEnd = inline.indexOf('// ======================= 模型别名 =======================');
+const fetchBody = fetchStart === -1 || fetchEnd === -1 ? '' : inline.slice(fetchStart, fetchEnd);
+check('存在 modelsAliasFetchView()', fetchBody.length > 400, 'len=' + fetchBody.length);
+check('命名获取面板有标题与表单', fetchBody.includes('从上游获取并批量新增') && fetchBody.includes('id="d-acct"'));
+check('结果区用 .result-body', fetchBody.includes('class="result-body"'));
+check('按钮组用 .panel-actions', fetchBody.includes('class="panel-actions"'));
 
 // 标签页本身: 用 data-mtab(不是 data-page —— 那会被角色守卫当成侧栏菜单项)
-check('有标签页容器 .page-tabs', /class="page-tabs"/.test(inline));
-check('两个标签项走 data-mtab(别名 / 定价)',
-  /data-mtab="alias"/.test(inline) && /data-mtab="price"/.test(inline));
+check('有标签页容器 .page-tabs', /class="page-tabs[^"]*"/.test(inline));
+check('四个标签项走 data-mtab(别名列表 / 别名设置 / 模型定价 / 默认单价)',
+  /data-mtab="alist"/.test(inline) && /data-mtab="aset"/.test(inline) &&
+  /data-mtab="price"/.test(inline) && /data-mtab="default"/.test(inline));
 check('🧨 标签项不用 data-page(否则被算成侧栏菜单项)',
   !/class="page-tab[^"]*"[^>]*data-page=/.test(inline));
 check('标签页互斥高亮(classList.toggle active)',
   /classList\.toggle\('active',\s*el\.dataset\.mtab === which\)/.test(inline));
 // 保存定价 / 保存别名后重新渲染时, 不能把用户从「定价」弹回「别名」
-check('跨标签页记忆当前页签 MODELS_TAB', /let\s+MODELS_TAB\s*=/.test(inline));
-check('PAGES.models 渲染时按 MODELS_TAB 恢复页签', /MODELS_TAB === 'price' \? 'price' : 'alias'/.test(inline));
-check('保存定价后记住页签(不弹回别名)', (inline.match(/MODELS_TAB = 'price';\s*PAGES\.models\(\);/g) || []).length >= 3,
+check('跨标签页记忆当前页签 MODELS_TAB(默认别名列表)', /let\s+MODELS_TAB\s*=\s*'alist'/.test(inline));
+check('PAGES.models 渲染时按 MODELS_TAB 恢复页签', /includes\(MODELS_TAB\)/.test(inline));
+check('保存定价后记住页签(不弹回别名)',
+  (inline.match(/MODELS_TAB = 'price';\s*PAGES\.models\(\);/g) || []).length >= 3,
   'count=' + (inline.match(/MODELS_TAB = 'price';\s*PAGES\.models\(\);/g) || []).length);
+check('保存别名后导览到别名列表页签',
+  (inline.match(/MODELS_TAB = 'alist';\s*PAGES\.models\(\);/g) || []).length >= 2,
+  'count=' + (inline.match(/MODELS_TAB = 'alist';\s*PAGES\.models\(\);/g) || []).length);
+check('保存默认单价后记住默认单价页签',
+  (inline.match(/MODELS_TAB = 'default';\s*PAGES\.models\(\);/g) || []).length >= 1,
+  'count=' + (inline.match(/MODELS_TAB = 'default';\s*PAGES\.models\(\);/g) || []).length);
 
-// 定价视图三块内容 —— 对应需求: 上游拉模型一键定价 / 单独定价 / 手动新增
+// 定价视图两块内容 —— 对应需求: 上游拉模型一键定价 / 单独定价 / 手动新增
 const priceStart = inline.indexOf('function modelsPricingView');
-const priceEnd = inline.indexOf('function modelForm');
+const priceEnd = inline.indexOf('function modelsDefaultPriceView');
 const priceBody = priceStart === -1 || priceEnd === -1 ? '' : inline.slice(priceStart, priceEnd);
 check('存在 modelsPricingView()', priceBody.length > 800, 'len=' + priceBody.length);
-check('① 有「默认单价」区块(未配价模型兜底)',
-  priceBody.includes('默认单价') && priceBody.includes('id="pd-save"') && priceBody.includes('default_price:'));
-check('① 默认单价可还原出厂默认(读到 default_price_builtin)',
-  priceBody.includes('default_price_builtin') && priceBody.includes("id=\"pd-reset\""));
+check('① 模型定价标签不再含「默认单价」区块(独立成标签)',
+  !priceBody.includes('id="pd-save"') && !priceBody.includes('default_price_builtin'));
 check('② 有「从上游获取模型」入口', priceBody.includes("id=\"m-fetch\""));
 check('② 有「一键设置定价」整批写入', priceBody.includes("id=\"m-apply\"") && /body:\s*JSON\.stringify\(\{\s*models:/.test(priceBody));
 check('② 有逐行「保存」(单独设置定价)', priceBody.includes('data-save-one'));
 check('③ 有「手动新增定价」(拉不到上游时的入口)',
-  priceBody.includes("id=\"p-new\"") && priceBody.includes('modelForm(null)'));
+  priceBody.includes("id=\"p-new\"") && priceBody.includes('modelForm(null'));
 check('定价行展示「已定价 / 未定价」状态', priceBody.includes('已定价') && priceBody.includes('未定价'));
 check('缓存价藏进 data-cr / data-cw(逐行保存不会冲掉已配的缓存价)',
   priceBody.includes('data-cr="') && priceBody.includes('data-cw="'));
+
+// 默认单价独立标签页
+const defStart = inline.indexOf('function modelsDefaultPriceView');
+const defEnd = inline.indexOf('function modelForm');
+const defBody = defStart === -1 || defEnd === -1 ? '' : inline.slice(defStart, defEnd);
+check('存在 modelsDefaultPriceView()', defBody.length > 400, 'len=' + defBody.length);
+check('默认单价页有表单 + 保存按钮',
+  defBody.includes('id="pd-save"') && defBody.includes('default_price:'));
+check('默认单价可还原出厂默认(读到 default_price_builtin)',
+  defBody.includes('default_price_builtin') && defBody.includes("id=\"pd-reset\""));
+
+// 带吸顶 tab 的页面, 标题栏必须摘掉 sticky(.page-head 也是 sticky top:0,
+// 两个吸顶元素同位重叠, 标题下半截会从 tab 底下露出来 —— 2026-09-24 踩过)
+check('模型管理页标题栏挂 .no-stick(不与吸顶 tab 同位重叠)',
+  /page-head no-stick"><h2>模型管理</.test(inline));
+check('CSS 有 .page-head.no-stick 摘 sticky 规则',
+  /\.page-head\.no-stick\s*\{[^}]*position:\s*static/.test(htmlNoCss));
+
+// ---------- 6b. 分组「模型关联」弹窗(groupModelsForm) ----------
+// 用户需求: 分组操作列新增「模型关联」, 弹窗按上游平台分档多选/全选,
+// 保存到 groups.model_allowlist; /v1/models 据此过滤(src/models.ts 既有行为)。
+const gmfStart = inline.indexOf('function groupModelsForm');
+const gmfEnd = inline.indexOf('function delGroup');
+const gmfBody = gmfStart === -1 || gmfEnd === -1 ? '' : inline.slice(gmfStart, gmfEnd);
+check('存在 groupModelsForm()', gmfBody.length > 1500, 'len=' + gmfBody.length);
+check('分组操作列有「模型关联」按钮(data-models-grp)', /data-models-grp="/.test(inline));
+check('已关联数量徽标(读 model_allowlist 长度)', /model_allowlist \|\| \[\]\)\.length/.test(inline));
+check('弹窗数据源: 分组绑定账号 + 全量账号(取 model_index/别名)',
+  gmfBody.includes("api('/groups/' + g.id + '/accounts')") && gmfBody.includes("api('/accounts')"));
+check('模型候选 = model_index + 账号级别名键', gmfBody.includes('model_index') && gmfBody.includes('model_aliases'));
+check('按平台分档(data-gmtab 切换)', gmfBody.includes('data-gmtab'));
+check('每档有「全选/取消全选」(id="gm-all")', gmfBody.includes('id="gm-all"'));
+check('唯一 id = 平台::模型(候选行 value 带平台前缀, data-kind 区分候选/其他)',
+  gmfBody.includes('data-kind=') && gmfBody.includes("kind === 'cand'") &&
+  gmfBody.includes("'::' + n"));
+check('勾选状态存 cur/orphanSel(切档重渲染不丢勾选)',
+  gmfBody.includes('cur.set(') && gmfBody.includes('orphanSel'));
+check('候选严格区分大小写(不再按小写合并)', !gmfBody.includes('name.toLowerCase()'));
+check('保存走 PUT /groups/:id 且写 model_allowlist',
+  /api\('\/groups\/' \+ g\.id,\s*\{\s*method:\s*'PUT'/.test(gmfBody) &&
+  gmfBody.includes('model_allowlist:'));
+check('全部不选 = 写 null 清空(不过滤)', gmfBody.includes('model_allowlist: arr.length ? arr : null'));
+check('已选但候选消失的模型进「其他」档(不静默丢弃)', gmfBody.includes('__orphan'));
+
+// ---------- 6c. 别名可改名(aliasForm) ----------
+// 2026-09-24: 编辑别名时「对外别名」不再是 readonly; 改名=删旧键+写新键+撞名检测
+const afStart = inline.indexOf('function aliasForm');
+const afEnd = inline.indexOf('// ==================== 模型获取与定价');
+const afBody = afStart === -1 || afEnd === -1 ? '' : inline.slice(afStart, afEnd);
+check('存在 aliasForm()', afBody.length > 800, 'len=' + afBody.length);
+check('🧨 对外别名输入框编辑时不再 readonly', !/al-alias[^>]*readonly/.test(afBody));
+check('改名 = 删旧键(delete merged[alias])', afBody.includes('delete merged[alias]'));
+check('改名撞名检测(大小写不敏感, 不覆盖另一个别名)',
+  afBody.includes("k.toLowerCase() === newAlias.toLowerCase() && k !== alias"));
+
+// ---------- 6d. 别名列表批量删除 ----------
+// 2026-09-24: 扁平表加勾选列 + 全选 + 批量删除(model_aliases 整表替换, 按账号分组 PUT)
+const avStart = inline.indexOf('function modelsAliasView');
+const avEnd = inline.indexOf('function modelsAliasFetchView');
+const avBody = avStart === -1 || avEnd === -1 ? '' : inline.slice(avStart, avEnd);
+check('别名列表有勾选列(.al-chk) + 表头全选(#al-all)',
+  avBody.includes('class="al-chk"') && avBody.includes('id="al-all"'));
+check('有「批量删除」按钮(btn-batch-del-alias, 默认禁用)',
+  avBody.includes('id="btn-batch-del-alias"') && avBody.includes('btn-batch-del-alias" disabled'));
+check('批量删除按账号分组(整表替换, 不逐行)',
+  avBody.includes('byAcct') && (avBody.match(/model_aliases: merged/g) || []).length >= 1);
+check('批量删除有确认弹窗', avBody.includes('确认批量删除'));
 
 // ---------- 7. CSS ----------
 console.log('\n[5] 相关 CSS');
@@ -332,7 +411,7 @@ check('.main 有细滚动条样式', /\.main::-webkit-scrollbar\s*\{/.test(html)
 check('.page-head 标题左有强调竖条', /\.page-head h2::before\s*\{/.test(html));
 check('.panel-title 有强调竖条', /\.panel-title::before\s*\{/.test(html));
 check('.panel 有浅阴影', /\.panel\s*\{[^}]*box-shadow:/.test(html));
-check('表头是 sticky(长表格有上下文)', /th\s*\{[^}]*position:\s*sticky/.test(html));
+check('表头不再 sticky(表格随页面整体滚动)', !/th\s*\{[^}]*position:\s*sticky/.test(html));
 check('.card 有 hover 反馈', /\.card:hover\s*\{/.test(html));
 check('按钮统一 inline-flex(图标+文字对齐)', /\.btn\s*\{[^}]*display:\s*inline-flex/.test(html));
 
@@ -490,7 +569,7 @@ check('滚动条 thumb 边框跟着 --content(不是 --bg)',
 // 用户要求: 登录后刷新不要直接显示登录页, 先给等待框(请求/验证中), 会话有效就回到当前 URL 页面,
 //          失效才跳登录页。整套做法就是「三个互斥视图 + 默认显示引导」, 顺序反了就退化回老毛病。
 check('HTML 有启动引导视图 #boot-view', /<div id="boot-view">/.test(html));
-check('引导里有转圈 + "验证中"文案', /id="boot-view"[\s\S]{0,300}?class="spinner"[\s\S]{0,300}?正在验证登录状态/.test(html));
+check('引导里有转圈 + "加载"文案', /id="boot-view"[\s\S]{0,300}?class="spinner"[\s\S]{0,300}?正在加载/.test(html));
 check('#boot-view 默认可见(display flex)', /#boot-view\s*\{[^}]*display:\s*flex/.test(htmlNoCss));
 // 🚨 核心: 登录页默认必须隐藏 —— 它默认 flex 的话首帧就是登录页(本次要修的老毛病)
 check('#login-view 默认隐藏(否则刷新会先闪登录页)', /#login-view\s*\{[^}]*display:\s*none/.test(htmlNoCss));

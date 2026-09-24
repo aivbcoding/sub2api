@@ -17,6 +17,7 @@
 
 import { auditLog, hashPassword, parseMenus, type AdminAuthResult } from './admin-auth';
 import type { AccountRow, AuthContext, Env } from './types';
+import { isTurnstileConfigured, verifyTurnstile, verifyCode } from './verify-code';
 import {
   BUILTIN_PLATFORMS,
   DEFAULT_BASE_URLS,
@@ -128,10 +129,9 @@ export const MENU_CATALOG: { key: string; label: string }[] = [
   { key: 'board', label: '数据看板' },
   { key: 'keys', label: 'API Key' },
   { key: 'accounts', label: '上游账号' },
-  { key: 'aliases', label: '模型别名' },
   { key: 'groups', label: '分组' },
   { key: 'users', label: '用户' },
-  { key: 'models', label: '模型定价' },
+  { key: 'models', label: '模型管理' },
   { key: 'usage', label: '请求日志' },
   { key: 'audit', label: '操作审计' },
   { key: 'announce', label: '公告管理' },
@@ -150,8 +150,9 @@ const MENU_LABELS: Record<string, string> = Object.fromEntries(
  * 规则: 每个 /api/admin/<resource> 都必须在这里登记; 没登记的资源一律 404 ——
  * fail-closed。这样"新加了一个接口但忘了挂权限"的后果是打不开, 而不是对所有人敞开。
  *
- * 注意 `aliases` / `models` 两个页面本身没有独立接口(它们复用 accounts / models 的数据),
+ * 注意 `models` 页面本身没有独立接口(它复用 accounts / models 的数据),
  * 所以后端只能按 accounts / models 拦; 前端菜单隐藏负责"看不看得见那一页"。
+ * (2026-09-24: 独立「模型别名」菜单已并入「模型定价」页的「别名」标签, aliases 菜单键摘除。)
  * 🚨 「模型定价」页的**上游拉取**要读 `/accounts` —— 只给了 `models` 没给 `accounts`
  * 的角色能手动新增定价, 但拉不了上游列表(前端会给出这句提示, 不是白屏)。
  * `my` 资源是例外 —— 它属于"任何登录用户访问自己", 不挂菜单闸门, 见 handleAdminApi。
@@ -1205,17 +1206,123 @@ async function handleUsers(
   }
 
   if (method === 'DELETE' && id !== null) {
-    // 软删除, 与上游一致
-    await env.DB.prepare(
-      `UPDATE users SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2 AND deleted_at IS NULL`,
-    )
-      .bind(new Date().toISOString(), id)
-      .run();
-    await auditLog(env, auth.admin, 'delete', 'user', id, '', req);
-    return json({ ok: true });
+    return await deleteUserCascade(env, id, auth, req);
   }
 
   return badRequest('Unsupported method');
+}
+
+/**
+ * 物理删除用户 + 级联清理所有关联数据。
+ *
+ * 为什么是「物理删」而不是沿用软删除: 用户明确要求"删除用户时把 TA 创建的
+ * API Key 和使用日志一起删掉"。软删除(置 deleted_at)会留下:
+ *   - usage_logs 里的计费记录(user_id/api_key_id 仍指向已删用户, 统计里还在)
+ *   - api_keys 里的 key(客户端拿 key 一调又会 401/404, 徒增困惑)
+ * 而 key 一删, usage_logs.api_key_id 就成了孤儿 —— 所以必须连同
+ * usage_logs / usage_billing_dedup / user_checkins / 邮箱验证码 一起清。
+ *
+ * 删除范围(与前端确认框文案一致, 改这里必改 delUser):
+ *   - api_keys            (该用户的全部 Key, 物理删)
+ *   - usage_logs          (该用户的全部使用日志)
+ *   - usage_billing_dedup (该用户 Key 的计费幂等记录)
+ *   - user_checkins       (签到记录)
+ *   - email_verify_codes  (该邮箱的验证码)
+ *   - email_verify_send_logs (该邮箱的验证码发送日志)
+ *
+ * 🚨 审计日志(admin_audit_logs)不删 —— 审计的意义就在于"删过什么、谁删的"
+ *    要留痕, 级联删除审计会自己消灭自己。
+ *
+ * 🚨 追加安全: 管理员不能物理删除自己。误删自己=把自己锁在门外,
+ *    而且本请求的执行上下文(会话 token 对应的用户)会变成不存在, 后续必挂。
+ */
+async function deleteUserCascade(
+  env: Env,
+  id: number,
+  auth: AdminAuthResult,
+  req: Request,
+): Promise<Response> {
+  if (auth.admin?.id === id) {
+    return json(
+      { error: { message: '不能删除当前登录的账号。如需注销, 请联系另一名超级管理员操作。', type: 'forbidden' } },
+      400,
+    );
+  }
+
+  // 先取用户信息(邮箱 + 属于他的 key 列表) —— 删除前必须拿到,
+  // 否则删完之后 email / key_id 就无从查起了。
+  const user = await env.DB.prepare(
+    `SELECT id, email, username FROM users WHERE id = ?1 AND deleted_at IS NULL`,
+  )
+    .bind(id)
+    .first<{ id: number; email: string; username: string }>();
+
+  const email = String(user?.email ?? '');
+  // 不存在 / 已软删(到这一步的入口本来就只查非软删, 但保持一致)
+  if (!user) return notFound('User not found');
+
+  const keys = await env.DB.prepare(`SELECT id FROM api_keys WHERE user_id = ?1`)
+    .bind(id)
+    .all<{ id: number }>();
+  const keyIds = (keys.results ?? []).map((k) => k.id);
+
+  const nowIso = new Date().toISOString();
+  const statements: D1PreparedStatement[] = [];
+
+  // ---- 1. 该用户的 API Key(物理删) ----
+  statements.push(
+    env.DB.prepare(`DELETE FROM api_keys WHERE user_id = ?1`).bind(id),
+  );
+
+  // ---- 2. 使用日志(user_id 维度, 覆盖所有 key 的请求) ----
+  statements.push(
+    env.DB.prepare(`DELETE FROM usage_logs WHERE user_id = ?1`).bind(id),
+  );
+
+  // ---- 3. 计费幂等(按 key 维度; 若上面 api_keys 删了, 这里显式按 key_id 清) ----
+  if (keyIds.length > 0) {
+    // 逐条删比 IN(...) 好拼; D1 batch 里不好做动态占位, 拆成多段插入
+    for (const kid of keyIds) {
+      statements.push(
+        env.DB.prepare(`DELETE FROM usage_billing_dedup WHERE api_key_id = ?1`).bind(kid),
+      );
+    }
+  }
+
+  // ---- 4. 签到记录 ----
+  statements.push(
+    env.DB.prepare(`DELETE FROM user_checkins WHERE user_id = ?1`).bind(id),
+  );
+
+  // ---- 5. 邮箱验证码 + 发送日志(按该用户邮箱; 发送日志按 request_id 反查, 不需要算 hash) ----
+  statements.push(
+    env.DB.prepare(`DELETE FROM email_verify_codes WHERE email_normalized = ?1`).bind(email.toLowerCase()),
+  );
+  statements.push(
+    env.DB.prepare(
+      `DELETE FROM email_verify_send_logs
+        WHERE request_id IN (SELECT request_id FROM email_verify_codes WHERE email_normalized = ?1)`,
+    ).bind(email.toLowerCase()),
+  );
+
+  // ---- 6. 最后删用户本体(物理删) ----
+  statements.push(
+    env.DB.prepare(`DELETE FROM users WHERE id = ?1 AND deleted_at IS NULL`).bind(id),
+  );
+
+  await env.DB.batch(statements);
+
+  // 审计: 记被删用户邮箱 + 连带删除的 key 数量(方便事后对账)
+  await auditLog(
+    env,
+    auth.admin,
+    'delete',
+    'user',
+    id,
+    `email=${email} keys=${keyIds.length} cascade=1`,
+    req,
+  );
+  return json({ ok: true, deleted_keys: keyIds.length });
 }
 
 function serializeUser(row: Record<string, unknown>) {
@@ -2407,12 +2514,24 @@ async function handleAccounts(
   }
 
   if (method === 'DELETE' && id !== null) {
+    // 🚨 软删账号前, 先把它的**账号级定价**和**分组绑定**清掉:
+    //   1. model_pricing WHERE account_id = id —— 「模型定价跟账号走」
+    //      (v1.x 起定价表支持 (account_id, model) 复合主键, 账号删了它的专属价不该留着)
+    //   2. account_groups WHERE account_id = id -> 删绑定(靠 FK ON DELETE CASCADE 也可以,
+    //      但 D1 未保证开启 foreign_keys, 显式删最稳)
+    //   3. 模型别名(model_aliases)存在 accounts.extra JSON 里, 随账号软删自然消失,
+    //      无需单独处理; 模型索引(model_index)——真实列, 属于账号自身, 同样随账号走。
+    //   usage_logs 保留(审计), 但为不破坏计费统计, 数据仍在。
+    await env.DB.batch([
+      env.DB.prepare(`DELETE FROM model_pricing WHERE account_id = ?1`).bind(id),
+      env.DB.prepare(`DELETE FROM account_groups WHERE account_id = ?1`).bind(id),
+    ]);
     await env.DB.prepare(
       `UPDATE accounts SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2 AND deleted_at IS NULL`,
     )
       .bind(new Date().toISOString(), id)
       .run();
-    await auditLog(env, auth.admin, 'delete', 'account', id, '', req);
+    await auditLog(env, auth.admin, 'delete', 'account', id, 'cascade: model_pricing + account_groups', req);
     return json({ ok: true });
   }
 
@@ -3549,16 +3668,24 @@ function settingOn(raw: string | null, def = true): boolean {
   return String(raw).trim().toLowerCase() !== 'false';
 }
 
-/** 公开的注册配置 —— 注册页据此决定能不能注册、密码下限多少(前端不硬编码) */
+/** 公开的注册配置 —— 注册页据此决定能不能注册、密码下限多少、要不要 Turnstile(前端不硬编码) */
 export async function getRegisterConfig(env: Env): Promise<{
   enabled: boolean;
   auto_approve: boolean;
   min_password_length: number;
+  turnstile_site_key: string;
+  /** Turnstile 配置了才要求验证码(否则前端隐藏验证码区, 保持旧注册流程) */
+  verification_required: boolean;
 }> {
+  const turnstileConfigured = isTurnstileConfigured(env);
   return {
     enabled: settingOn(await readSetting(env, REGISTRATION_SETTING)),
     auto_approve: settingOn(await readSetting(env, AUTO_APPROVE_SETTING)),
     min_password_length: MIN_PASSWORD_LENGTH,
+    turnstile_site_key: turnstileConfigured
+      ? String((env as unknown as Record<string, string>)['TURNSTILE_SITE_KEY'] ?? '').trim()
+      : '',
+    verification_required: turnstileConfigured,
   };
 }
 
@@ -3577,6 +3704,8 @@ export async function handleRegister(
   const email = String(body.email ?? '').trim().toLowerCase();
   const username = String(body.username ?? '').trim();
   const password = String(body.password ?? '');
+  const verifyCodeInput = String(body.verify_code ?? '');
+  const turnstileToken = String(body.turnstile_token ?? '');
 
   if (!email) return badRequest('请填写邮箱。');
   if (!REGISTER_EMAIL_RE.test(email)) return badRequest('邮箱格式不正确。');
@@ -3584,6 +3713,29 @@ export async function handleRegister(
   if (username.length > 64) return badRequest('用户名最多 64 个字符。');
   if (password.length < MIN_PASSWORD_LENGTH) {
     return badRequest(`密码至少 ${MIN_PASSWORD_LENGTH} 位。`);
+  }
+
+  // ---- Turnstile 服务端校验(配置了才强制; Token B, action=register) ----
+  // 与"发送验证码"的 Token A 必须不同 —— 一次 Turnstile Token 只能用一次,
+  // 且 action 隔离, 防止用发码的 token 直接注册。
+  const turnstileConfigured = isTurnstileConfigured(env);
+  if (turnstileConfigured) {
+    const v = await verifyTurnstile(env, turnstileToken, 'register', req);
+    if (!v.passed) {
+      return json(
+        { error: { message: '人机验证未通过，请刷新后重试。', type: 'forbidden' } },
+        403,
+      );
+    }
+
+    // 配置了 Turnstile 必然要求验证码(Token B 校验通过只是人机, 邮箱归属还要验证码)
+    if (!verifyCodeInput) {
+      return badRequest('请填写邮箱验证码。');
+    }
+    const vc = await verifyCode(env, email, 'REGISTER', verifyCodeInput);
+    if (!vc.ok) {
+      return json({ error: { message: vc.message, type: 'invalid_request_error' } }, vc.status);
+    }
   }
 
   const exists = await env.DB.prepare(
@@ -3728,15 +3880,18 @@ function nonNegNumber(v: unknown): number {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
-/** 把请求里的一条定价规整成可写库的行; model 为空则丢弃 */
+/** 把请求里的一条定价规整成可写库的行; model 为空则丢弃; account_id 缺省为 0(全局) */
 function normalizePricingRow(
   raw: unknown,
-): { model: string; input_price: number; output_price: number; cache_read_price: number; cache_creation_price: number } | null {
+): { account_id: number; model: string; input_price: number; output_price: number; cache_read_price: number; cache_creation_price: number } | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
   const model = String(o.model ?? '').trim();
   if (!model) return null;
+  const rawAcct = Number(o.account_id ?? 0);
+  const account_id = Number.isInteger(rawAcct) && rawAcct > 0 ? rawAcct : 0;
   return {
+    account_id,
     model,
     input_price: nonNegNumber(o.input_price),
     output_price: nonNegNumber(o.output_price),
@@ -3766,21 +3921,37 @@ async function handleModelPricing(
 ): Promise<Response> {
   if (method === 'GET') {
     const [rows, rawDefault] = await Promise.all([
-      env.DB.prepare(`SELECT * FROM model_pricing ORDER BY model ASC`).all<Record<string, unknown>>(),
+      env.DB.prepare(
+        `SELECT p.account_id, p.model, p.input_price, p.output_price, p.cache_read_price, p.cache_creation_price, p.updated_at,
+                a.name AS account_name, a.platform AS account_platform, a.deleted_at AS account_deleted_at
+         FROM model_pricing p
+         LEFT JOIN accounts a ON a.id = p.account_id AND p.account_id > 0
+         ORDER BY p.account_id ASC, p.model ASC`,
+      ).all<Record<string, unknown>>(),
       readSetting(env, DEFAULT_PRICE_SETTING),
     ]);
+    // 账号已软删: 定价行标成"账号已删除"(仍在库里, 等物理清理; 前端给个醒目提示)
     return json({
-      models: (rows.results ?? []).map((r) => ({
-        model: r.model,
-        input_price: Number(r.input_price),
-        output_price: Number(r.output_price),
-        cache_read_price: Number(r.cache_read_price),
-        cache_creation_price: Number(r.cache_creation_price),
-        // 换算成"美元 / 百万 token", 更符合直觉
-        input_per_mtok: Number(r.input_price),
-        output_per_mtok: Number(r.output_price),
-        updated_at: r.updated_at,
-      })),
+      models: (rows.results ?? []).map((r) => {
+        const accountId = Number(r.account_id);
+        const accountDeleted = Number(r.account_id) > 0 && r.account_deleted_at !== null;
+        return {
+          model: r.model,
+          account_id: accountId,
+          input_price: Number(r.input_price),
+          output_price: Number(r.output_price),
+          cache_read_price: Number(r.cache_read_price),
+          cache_creation_price: Number(r.cache_creation_price),
+          // 换算成"美元 / 百万 token", 更符合直觉
+          input_per_mtok: Number(r.input_price),
+          output_per_mtok: Number(r.output_price),
+          // 平台展示信息(全局价 account_id=0 显示"全局")
+          account_name: r.account_name ?? null,
+          account_platform: r.account_platform ?? null,
+          account_deleted: accountDeleted,
+          updated_at: r.updated_at,
+        };
+      }),
       default_price: parseDefaultPrice(rawDefault),
       // 出厂默认值 —— 页面上给一个「还原默认」用, 免得改坏了没法回头
       default_price_builtin: DEFAULT_PRICE,
@@ -3814,15 +3985,15 @@ async function handleModelPricing(
     await env.DB.batch(
       parsed.map((p) =>
         env.DB.prepare(
-          `INSERT INTO model_pricing (model, input_price, output_price, cache_read_price, cache_creation_price, updated_at)
-           VALUES (?1,?2,?3,?4,?5,?6)
-           ON CONFLICT(model) DO UPDATE SET
+          `INSERT INTO model_pricing (account_id, model, input_price, output_price, cache_read_price, cache_creation_price, updated_at)
+           VALUES (?1,?2,?3,?4,?5,?6,?7)
+           ON CONFLICT(account_id, model) DO UPDATE SET
              input_price = excluded.input_price,
              output_price = excluded.output_price,
              cache_read_price = excluded.cache_read_price,
              cache_creation_price = excluded.cache_creation_price,
              updated_at = excluded.updated_at`,
-        ).bind(p.model, p.input_price, p.output_price, p.cache_read_price, p.cache_creation_price, now),
+        ).bind(p.account_id, p.model, p.input_price, p.output_price, p.cache_read_price, p.cache_creation_price, now),
       ),
     );
 
@@ -3836,22 +4007,41 @@ async function handleModelPricing(
   }
 
   if (method === 'DELETE') {
-    const models = (Array.isArray(body.models)
-      ? body.models.map((m) => String(m ?? '').trim())
-      : [String(body.model ?? '').trim()]
-    ).filter(Boolean);
-    if (!models.length) return badRequest('model is required');
+    // 精确删除粒度: 每项可带 { account_id, model } —— 只删该账号下的定价;
+    // 缺省 account_id = 0(全局)。兼容旧调用: 单条 { model } / 批量 models 是字符串数组。
+    const bodyItems = Array.isArray(body.models) ? body.models : [body];
+    const targets: { account_id: number; model: string }[] = [];
+    for (const it of bodyItems) {
+      let model = '';
+      let account_id = 0;
+      if (typeof it === 'string') {
+        model = it.trim();
+      } else if (it && typeof it === 'object') {
+        const o = it as Record<string, unknown>;
+        model = String(o.model ?? '').trim();
+        const rawAcct = Number(o.account_id ?? 0);
+        account_id = Number.isInteger(rawAcct) && rawAcct > 0 ? rawAcct : 0;
+      }
+      if (model) targets.push({ account_id, model });
+    }
+    if (!targets.length) return badRequest('model is required');
 
     await env.DB.batch(
-      models.map((m) => env.DB.prepare(`DELETE FROM model_pricing WHERE model = ?1`).bind(m)),
+      targets.map((t) =>
+        env.DB.prepare(`DELETE FROM model_pricing WHERE account_id = ?1 AND model = ?2`)
+          .bind(t.account_id, t.model),
+      ),
     );
+    const auditSummary = targets.length === 1
+      ? `${targets[0].account_id ? 'acct#' + targets[0].account_id + ' ' : ''}${targets[0].model}`
+      : `${targets.length} models`;
     await auditLog(
       env, auth.admin, 'delete', 'model_pricing',
-      models.length === 1 ? models[0] : `${models.length} models`,
-      models.length === 1 ? '' : JSON.stringify(models).slice(0, 300),
+      auditSummary,
+      targets.length === 1 ? '' : JSON.stringify(targets).slice(0, 300),
       req,
     );
-    return json({ ok: true, deleted: models.length });
+    return json({ ok: true, deleted: targets.length });
   }
 
   return badRequest('Unsupported method');

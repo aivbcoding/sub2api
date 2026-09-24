@@ -185,15 +185,21 @@ CREATE TABLE IF NOT EXISTS usage_billing_dedup (
 );
 
 -- ---------- 模型定价 (替代上游 model_pricing.json + billing fallback) ----------
--- price 单位: 微美元 / 1 token (即 USD per token * 1e8)
+-- price 单位: 微美元 / token (即 USD per token * 1e8)
+-- account_id: 0 = 全局兜底价; >0 = 该账号专属价
+-- 复合主键 (account_id, model): 同一模型可在不同账号下配不同价格
 CREATE TABLE IF NOT EXISTS model_pricing (
-  model                  TEXT    PRIMARY KEY,
-  input_price            INTEGER NOT NULL DEFAULT 0,
-  output_price           INTEGER NOT NULL DEFAULT 0,
-  cache_read_price       INTEGER NOT NULL DEFAULT 0,
-  cache_creation_price   INTEGER NOT NULL DEFAULT 0,
-  updated_at             TEXT    NOT NULL DEFAULT (datetime('now'))
+  account_id            INTEGER NOT NULL DEFAULT 0,  -- 0=全局兜底; >0=账号专属
+  model                 TEXT    NOT NULL,
+  input_price           INTEGER NOT NULL DEFAULT 0,
+  output_price          INTEGER NOT NULL DEFAULT 0,
+  cache_read_price      INTEGER NOT NULL DEFAULT 0,
+  cache_creation_price  INTEGER NOT NULL DEFAULT 0,
+  updated_at            TEXT    NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (account_id, model)
 );
+CREATE INDEX IF NOT EXISTS idx_model_pricing_account ON model_pricing(account_id);
+CREATE INDEX IF NOT EXISTS idx_model_pricing_model    ON model_pricing(model);
 
 -- ---------- 设置 (上游 settings) ----------
 CREATE TABLE IF NOT EXISTS settings (

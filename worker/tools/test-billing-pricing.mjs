@@ -80,10 +80,11 @@ check('默认单价落在 settings 表(键 model_pricing_default)',
 
 const resolveBody = fnBody(billing, 'resolveModelPrice');
 check('抠到 resolveModelPrice()', resolveBody.length > 0);
-check('resolveModelPrice 只收 (model, dbPricing, defaultPrice) 三个参数',
-  /resolveModelPrice\(\s*model:\s*string,\s*dbPricing:\s*Map<string,\s*ModelPrice>,\s*defaultPrice:\s*ModelPrice,?\s*\)/.test(billing));
-check('不再收分组价目表参数(groupPricing 已下线)', !/groupPricing/.test(resolveBody));
-check('只从 dbPricing 表取值', /dbPricing\.get\(/.test(resolveBody));
+check('resolveModelPrice 收 (model, accountId, dbPricing, defaultPrice) 四个参数',
+  /resolveModelPrice\(\s*model:\s*string,\s*accountId:\s*number,\s*dbPricing:\s*Map<string,\s*ModelPrice>,\s*defaultPrice:\s*ModelPrice,?\s*\)/.test(billing));
+check('不支持分组价目表参数(groupPricing 已下线)', !/groupPricing/.test(resolveBody));
+check('只从 dbPricing 表取值, 账号级优先、全局兜底',
+  /dbPricing\.get\(`\$\{accountId\}:\$\{m\}`\)\s*\?\?\s*dbPricing\.get\(`0:\$\{m\}`\)/.test(resolveBody));
 check('取不到就返回 defaultPrice(不再有第三级兜底)',
   /return defaultPrice;/.test(resolveBody));
 check('去日期后缀再查一次(保留原有兼容行为)', /-\\d\{8\}\$/.test(resolveBody));
@@ -111,8 +112,11 @@ check('读设置失败不抛(计费链路不能被它搞挂)',
   /catch\s*\{\s*return DEFAULT_PRICE;\s*\}/.test(loadDefBody));
 check('并行取 dbPricing + defaultPrice',
   /Promise\.all\(\[\s*loadDbPricing\(env\),\s*loadDefaultPrice\(env\),?\s*\]\)/.test(gateway));
-check('resolveModelPrice 按三参调用(无分组价目表)',
-  /const price = resolveModelPrice\(model, dbPricing, defaultPrice\)/.test(gateway));
+check('resolveModelPrice 按四参调用(传账号 id, 支持账号级定价)',
+  /const price = resolveModelPrice\(model, account\.id, dbPricing, defaultPrice\)/.test(gateway));
+check('loadDbPricing 带出 account_id(复合主键)',
+  /SELECT account_id, model, input_price/.test(gateway) &&
+  /map\.set\(`\$\{Number\(r\.account_id\)\}:\$\{r\.model\}`/.test(gateway));
 check('🧨 不再有 ctx.groupModelPricing 参与单价', !/groupModelPricing/.test(stripComments(gateway)));
 check('分组对价格只走倍率(combineRateMultiplier)',
   /combineRateMultiplier\(\s*ctx\.groupRateMultiplier,\s*account\.rate_multiplier,?\s*\)/.test(gateway));
@@ -135,15 +139,17 @@ check('改默认单价会记审计(model_pricing_default)',
 check('PUT 支持批量 { models: [...] }(一键设置定价)',
   /Array\.isArray\(body\.models\) \? body\.models : \[body\]/.test(pricingBody));
 check('批量用 DB.batch 一次提交(不是 N 次往返)', /env\.DB\.batch\(/.test(pricingBody));
-check('写入是 upsert(ON CONFLICT(model) DO UPDATE)',
-  /ON CONFLICT\(model\) DO UPDATE SET/.test(pricingBody));
+check('写入是 upsert(ON CONFLICT(account_id, model) DO UPDATE)',
+  /ON CONFLICT\(account_id, model\) DO UPDATE SET/.test(pricingBody));
 check('PUT 用 normalizePricingRow 收敛字段', /\.map\(normalizePricingRow\)/.test(pricingBody));
 check('DELETE 支持批量 { models: [...] }', /Array\.isArray\(body\.models\)/.test(pricingBody));
+check('DELETE 支持按 { account_id, model } 精确删账号级定价',
+  /DELETE FROM model_pricing WHERE account_id = \?1 AND model = \?2/.test(pricingBody));
 check('改/删定价都记审计(model_pricing)',
   (pricingBody.match(/'model_pricing'/g) || []).length >= 2);
 check('单价一律非负(nonNegNumber 收敛)',
-  /function normalizePricingRow[\s\S]{0,400}?nonNegNumber\(/.test(adminApi) ||
-  /const normalizePricingRow[\s\S]{0,400}?nonNegNumber\(/.test(adminApi));
+  /function normalizePricingRow[\s\S]{0,600}?nonNegNumber\(/.test(adminApi) ||
+  /const normalizePricingRow[\s\S]{0,600}?nonNegNumber\(/.test(adminApi));
 
 // ============================================================
 // D. 删除日志 / 审计: 超管专属 + 删除动作留痕

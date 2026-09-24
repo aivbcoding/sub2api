@@ -161,6 +161,30 @@ npx wrangler deploy
 > `node tools/migrate-admin-accounts.mjs --apply`，它会把管理员并进 `users`
 > 并**保留原密码**。忘记密码用 `node tools/backfill-user-passwords.mjs --user <账号> "新密码"` 救砖。
 
+### 邮箱验证码注册（可选，推荐开启）
+
+注册流程可选启用「Turnstile 人机验证 + 邮箱验证码」：
+
+```bash
+# 1) 建验证码表
+npx wrangler d1 execute sub2api --file=./schema/schema-email-verify.sql --remote -y
+
+# 2) 部署独立邮件网关 Worker(见 sub2api/mail-worker/README.md), 拿到 URL
+
+# 3) 配置主站 Secret
+npx wrangler secret put TURNSTILE_SECRET_KEY   # Cloudflare Turnstile Siteverify 密钥
+npx wrangler secret put TURNSTILE_HOSTNAMES    # 例如 aixm.ccwu.cc,sub2api.aixm.ccwu.cc
+npx wrangler secret put MAIL_WORKER_URL        # https://<mail-worker>/send
+npx wrangler secret put MAIL_WORKER_SECRET     # 与邮件 Worker 的 SUB2API_WORKER_SECRET 一致
+npx wrangler secret put VERIFY_CODE_PEPPER     # 验证码 HMAC 用 Pepper(随机长字符串)
+```
+
+`TURNSTILE_SITE_KEY`（公开值）已写入 `wrangler.toml` 的 `[vars]`。
+
+**降级规则**：未配置 `TURNSTILE_SECRET_KEY` 时注册页不显示验证码区、注册走旧流程（不破坏现有用户）；
+未配置 `MAIL_WORKER_URL` 且 `DEBUG_MAIL=1` 时进入调试模式（不真发信，验证码回显到表单上方横幅），
+方便本地/无发信环境联调完整注册链路。生产**禁止**开 `DEBUG_MAIL`。
+
 ### 角色与菜单权限
 
 - `roles` 表：`code` / `name` / `menus`(JSON 数组) / `builtin`。

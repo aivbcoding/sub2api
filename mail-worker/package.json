@@ -1,0 +1,19 @@
+{
+  "name": "sub2api-mail-worker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sub2API 安全邮件网关 Worker —— 只做受保护的验证码邮件发送(Resend)",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240925.0",
+    "typescript": "^5.6.2",
+    "wrangler": "^3.80.0"
+  },
+  "dependencies": {
+    "resend": "^4.0.0"
+  }
+}

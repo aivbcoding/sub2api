@@ -43,5 +43,16 @@ ALLOW_INSECURE_HTTP = "false"
 #   upstream = 透传第一个可用上游的原生响应(不做聚合与统一)
 MODELS_LIST_MODE = "auto"
 
+# ---- 邮箱验证码 / Turnstile(可选; 配了才启用验证码注册) ----
+# TURNSTILE_SITE_KEY 是**公开**值(嵌前端), 可以放这里:
+TURNSTILE_SITE_KEY = "0x4AAAAAAFArM73kUM74AG77"
+# 其余凭据走 `wrangler secret put`(绝不能进 toml):
+#   TURNSTILE_SECRET_KEY   = <Cloudflare Turnstile Siteverify 密钥>
+#   TURNSTILE_HOSTNAMES    = "aixm.ccwu.cc,sub2api.aixm.ccwu.cc"
+#   MAIL_WORKER_URL        = https://<mail-worker>/send
+#   MAIL_WORKER_SECRET     = 与邮件 Worker 的 SUB2API_WORKER_SECRET 一致
+#   VERIFY_CODE_PEPPER     = 验证码 HMAC 用 Pepper(随机长字符串)
+#   DEBUG_MAIL             = "1" 时调试模式(不真发信, 验证码回显) —— 生产勿开
+
 [observability]
 enabled = true

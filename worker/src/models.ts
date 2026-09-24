@@ -82,6 +82,16 @@ export async function handleModelsList(env: Env, ctx: AuthContext, req: Request)
 
   // ---- 逐个平台聚合 ----
   const collected = new Set<string>();
+  // 2026-09-24: 白名单升级为 '平台::模型' 复合条目后, 过滤需要知道每个模型名
+  // 来自哪些平台 —— 同名模型在不同平台互不影响(sensenova 关了, chatapi 还在)。
+  const collectedSrc = new Map<string, Set<string>>(); // lower(模型名) -> 平台集合(小写)
+  const collect = (id: string, platform: string) => {
+    collected.add(id);
+    const k = id.toLowerCase();
+    let s = collectedSrc.get(k);
+    if (!s) { s = new Set(); collectedSrc.set(k, s); }
+    s.add(String(platform).toLowerCase());
+  };
   let passthrough: Response | null = null;
 
   // 上游拉不到列表的平台 (>0 表示该平台模型集为空, 需要靠本地定价表兜底)
@@ -103,7 +113,7 @@ export async function handleModelsList(env: Env, ctx: AuthContext, req: Request)
     let indexHit = 0;
     for (const account of accounts) {
       for (const id of accountDeclaredModels(account)) {
-        collected.add(id);
+        collect(id, platform);
         indexHit += 1;
       }
     }
@@ -128,7 +138,7 @@ export async function handleModelsList(env: Env, ctx: AuthContext, req: Request)
         }
 
         const ids = await extractModelIds(res, platform);
-        for (const id of ids) collected.add(id);
+        for (const id of ids) collect(id, platform);
         got = true;
         break;
       } catch {
@@ -170,8 +180,10 @@ export async function handleModelsList(env: Env, ctx: AuthContext, req: Request)
   // 兜底: 用本分组绑定的账号的 model_index 补齐 —— **只认本分组的账号**,
   // 否则改了账号绑定列表却不变(2026-09-21 修的缺陷, 见 buildLocalModelsForPlatforms)。
   if (platformsWithoutList.length > 0) {
-    for (const id of await buildLocalModelsForPlatforms(env, platformsWithoutList, ctx.groupId)) {
-      collected.add(id);
+    for (const p of platformsWithoutList) {
+      for (const id of await buildLocalModelsForPlatforms(env, [p], ctx.groupId)) {
+        collect(id, p);
+      }
     }
   }
 
@@ -181,9 +193,39 @@ export async function handleModelsList(env: Env, ctx: AuthContext, req: Request)
   // 分组白名单是硬约束 —— 与 gateway.isModelAllowed 一样做大小写不敏感匹配,
   // 否则会出现"网关放行 GLM-5.2, 但列表里只列 glm-5.2"的割裂(客户端下拉里
   // 看到的是小写, 用户手输大写又能用, 很难理解)。
+  //
+  // 2026-09-24: 条目支持两种形态(后台「模型关联」按 平台::模型 保存):
+  //   · 'model'            —— 旧格式/手填, 对所有平台生效
+  //   · 'platform::model'  —— 只对该平台生效; 同名模型在别的平台不受影响
   if (allowlist.length > 0) {
-    const allowed = new Set(allowlist.map((m) => m.toLowerCase()));
-    ids = ids.filter((id) => allowed.has(id.toLowerCase()));
+    const plain = new Set<string>();
+    const comp = new Map<string, Set<string>>(); // platformLower -> modelLower 集合
+    for (const entry of allowlist) {
+      const e = String(entry || '');
+      const i = e.indexOf('::');
+      if (i > 0) {
+        const p = e.slice(0, i).trim().toLowerCase();
+        const m = e.slice(i + 2).trim().toLowerCase();
+        if (p && m) {
+          let s = comp.get(p);
+          if (!s) { s = new Set(); comp.set(p, s); }
+          s.add(m);
+          continue;
+        }
+      }
+      plain.add(e.toLowerCase());
+    }
+    ids = ids.filter((id) => {
+      const k = id.toLowerCase();
+      if (plain.has(k)) return true;
+      const srcs = collectedSrc.get(k);
+      if (!srcs) return false;
+      for (const p of srcs) {
+        const s = comp.get(p);
+        if (s && s.has(k)) return true;
+      }
+      return false;
+    });
   }
 
   // 大小写去重: 多个上游对同一个模型大小写不一致时 (sensenova 用
@@ -349,7 +391,13 @@ async function buildLocalModels(
   ctx: AuthContext,
   allowlist: string[],
 ): Promise<ModelObject[]> {
-  const ids = new Set<string>(allowlist);
+  // '平台::模型' 复合条目在本地兜底路径剥掉平台前缀(local 模式拿不到
+  // "名字来自哪个平台"的完整事实, 平台约束只在聚合路径生效)。
+  const ids = new Set<string>(allowlist.map((e) => {
+    const s = String(e || '');
+    const i = s.indexOf('::');
+    return i > 0 ? s.slice(i + 2) : s;
+  }));
 
   // 分组定价表里配过的模型
   if (ctx.groupModelPricing) {

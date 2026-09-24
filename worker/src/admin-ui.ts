@@ -45,6 +45,18 @@ const ADMIN_HTML = `<!DOCTYPE html>
     --radius: 10px;
     /* 面板/卡片用更大的圆角 —— 块越大越需要"松"一点的圆角, 10px 在大面板上显紧 */
     --radius-lg: 14px;
+    /* 登录改版新增: 鉴权页主题变量(只用于三个鉴权视图, 不动业务页配色) */
+    --primary: #2563EB;
+    --primary-hover: #1D4ED8;
+    --primary-active: #1E40AF;
+    --text-primary: #0F172A;
+    --text-secondary: #64748B;
+    --text-muted: #94A3B8;
+    --auth-bg-1: #0F172A;
+    --auth-bg-2: #172554;
+    --auth-bg-3: #1E3A8A;
+    --auth-radius: 20px;
+    --field-radius: 10px;
     /* 阴影三档: 1=轻投影(卡片常态) / 2=面板浮起 / 3=悬浮态。
        🚨 内容区改成纯白之后, "白卡压在灰底上"这层天然对比就没了 ——
        卡片和面板再不靠阴影区分, 整页会糊成一片白。这套阴影是必需的, 不是装饰。 */
@@ -53,7 +65,7 @@ const ADMIN_HTML = `<!DOCTYPE html>
     --shadow-3: 0 2px 6px rgba(16,24,40,.08), 0 14px 30px -12px rgba(16,24,40,.18);
   }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
     background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.5;
   }
   button { font-family: inherit; font-size: 13px; cursor: pointer; }
@@ -74,41 +86,181 @@ const ADMIN_HTML = `<!DOCTYPE html>
   /* 三个互斥视图: 启动引导 / 登录 / 注册。
      🚨 #boot-view 默认**显示**、#login-view 默认**隐藏** —— 这两行顺序是本次改动的核心:
         反过来(登录页默认 flex)时, 刷新页面会先闪一下登录页, 等 /api/admin/me 回来才切走,
-        看起来就像"掉登录了"。启动引导顶在前面, 才有机会先显示"正在验证登录状态…"。 */
+        看起来就像"掉登录了"。启动引导顶在前面, 才有机会先显示"正在加载…请稍候"。 */
+  /* ===== 登录 / 注册 / 引导: 深色渐变背景 + 玻璃拟态卡片 =====
+     背景只作用在三个鉴权视图上(绝不改 --bg 全局变量, 否则会破坏主界面白底)。
+     主界面 #app-view 自有 --content 白底、height:100vh, 把它整个盖住, 所以改这里不影响业务页。 */
   #boot-view, #login-view, #register-view {
     align-items: center; justify-content: center;
-    min-height: 100vh; padding: 20px;
+    min-height: 100vh; padding: 24px;
+    color: #fff;
+    background-color: var(--auth-bg-1);
+    background-image:
+      radial-gradient(1100px 720px at 12% 8%, rgba(59,130,246,.30), transparent 60%),
+      radial-gradient(900px 680px at 88% 92%, rgba(45,212,191,.16), transparent 55%),
+      repeating-linear-gradient(0deg, rgba(255,255,255,.05) 0 1px, transparent 1px 44px),
+      repeating-linear-gradient(90deg, rgba(255,255,255,.05) 0 1px, transparent 1px 44px),
+      linear-gradient(135deg, #0F172A 0%, #172554 52%, #1E3A8A 100%);
+    background-attachment: fixed;
   }
+  /* 🚨 #boot-view 默认**显示**、#login-view 默认**隐藏** —— 这两条顺序不能动:
+     反过来(登录页默认 flex)时, 刷新页面会先闪一下登录页, 等 /api/admin/me 回来才切走,
+     看起来就像"掉登录了"。启动引导顶在前面, 才有机会先显示"正在加载…请稍候"。 */
   #boot-view { display: flex; opacity: 0; animation: bootFade .2s ease .12s forwards; }
   #login-view { display: none; }
   #register-view { display: none; }
   /* 🚨 别把上面那条改成直接 opacity:1 —— 认证很快时(本地通常 <200ms)会"闪出一个等待框",
      比不显示更扎眼。先透明、延后 120ms 再淡入: 快就用不上它, 慢才会出现。 */
   @keyframes bootFade { to { opacity: 1; } }
-  .boot-card { text-align: center; padding: 34px 28px; max-width: 330px; }
-  .boot-card .spinner { margin: 0 auto 16px; }
-  .boot-t { font-size: 14px; font-weight: 600; color: var(--text); }
-  .boot-s { margin-top: 7px; font-size: 12px; color: var(--muted); line-height: 1.6; }
+
+  /* 玻璃拟态卡片: 近白半透 + 背景模糊 + 细边框 + 柔和阴影; 进入时轻微上浮淡入 */
   .login-card {
-    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
-    padding: 32px; width: 100%; max-width: 380px; box-shadow: 0 4px 24px rgba(0,0,0,.06);
+    background: rgba(255,255,255,.96);
+    -webkit-backdrop-filter: blur(20px);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255,255,255,.35);
+    border-radius: 20px;
+    padding: 40px;
+    width: 100%; max-width: 420px;
+    box-shadow: 0 24px 60px -24px rgba(2,6,23,.65);
+    animation: cardIn .35s ease;
   }
-  #register-view .login-card { max-width: 400px; }
-  .login-card h1 { font-size: 19px; margin-bottom: 6px; }
-  .login-card p.sub { color: var(--muted); font-size: 13px; margin-bottom: 22px; }
-  .login-card label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 500; }
-  .login-card .field { margin-bottom: 16px; }
-  /* 卡片底部的「去注册 / 去登录」切换条 */
+  #register-view .login-card { max-width: 440px; }
+  @keyframes cardIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .boot-card { text-align: center; padding: 46px 44px 40px; max-width: 320px; }
+  /* 双色调加载环: 主色 + 青色拼半圈, 转起来有层次; 底轨用极淡的主色而不是灰 */
+  .boot-card .spinner {
+    width: 46px; height: 46px; margin: 0 auto 22px;
+    border-width: 3px;
+    border-color: rgba(37, 99, 235, .14);
+    border-top-color: var(--accent);
+    border-right-color: #22d3ee;
+  }
+  .boot-t {
+    display: flex; align-items: center; justify-content: center; gap: 7px;
+    font-size: 15px; font-weight: 600; color: var(--text); letter-spacing: .5px;
+  }
+  /* 三个跳动圆点代替死板的省略号 */
+  .boot-dots { display: inline-flex; gap: 4px; }
+  .boot-dots i {
+    width: 5px; height: 5px; border-radius: 50%;
+    background: var(--accent); opacity: .25;
+    animation: bootDot 1.2s ease infinite;
+  }
+  .boot-dots i:nth-child(2) { animation-delay: .15s; }
+  .boot-dots i:nth-child(3) { animation-delay: .3s; }
+  @keyframes bootDot {
+    0%, 60%, 100% { opacity: .25; transform: translateY(0); }
+    30%           { opacity: 1;   transform: translateY(-3px); }
+  }
+  .boot-s {
+    margin-top: 9px; font-size: 12.5px; color: var(--muted);
+    letter-spacing: 3px; text-indent: 3px; /* 抵消末字符字距, 视觉居中 */
+  }
+
+  /* 品牌块: Logo + 产品名 + 副标题 */
+  .brand-block { text-align: center; margin-bottom: 22px; }
+  .login-logo {
+    width: 48px; height: 48px; margin: 0 auto 14px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 12px; font-size: 22px; font-weight: 800; color: #fff;
+    background: linear-gradient(135deg, var(--accent), #22d3ee);
+    box-shadow: 0 8px 20px -6px rgba(37,99,235,.55);
+  }
+  .brand-name { font-size: 24px; font-weight: 600; color: var(--text-primary); letter-spacing: .2px; }
+  .brand-tag { margin-top: 4px; font-size: 14px; color: var(--text-secondary); }
+
+  /* 欢迎标题 + 副文案 */
+  .welcome { font-size: 26px; font-weight: 600; color: var(--text-primary); text-align: center; margin-bottom: 6px; }
+  .login-card p.sub { color: var(--text-secondary); font-size: 14px; text-align: center; margin-bottom: 26px; line-height: 1.6; }
+
+  /* 表单字段: 48px 高输入框 + 左侧图标 + 右侧眼睛 + focus 光环 */
+  .login-card label { display: block; margin-bottom: 8px; font-size: 13px; font-weight: 500; color: #334155; }
+  .login-card .field { margin-bottom: 18px; }
+  .inp { position: relative; display: flex; align-items: center; }
+  .inp input {
+    width: 100%; height: 48px; padding: 0 14px;
+    border: 1px solid #E2E8F0; border-radius: 10px; background: #fff; color: #0F172A;
+    font-size: 14px; transition: border-color .15s, box-shadow .15s;
+  }
+  .inp.has-ico input { padding-left: 42px; }
+  .inp.has-eye input { padding-right: 46px; }
+  .inp input::placeholder { color: #94A3B8; }
+  .inp input:hover { border-color: #94A3B8; }
+  .inp input:focus { outline: none; border-color: #2563EB; box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
+  .inp .ico { position: absolute; left: 14px; font-size: 16px; color: var(--text-muted); pointer-events: none; }
+  .inp .eye {
+    position: absolute; right: 8px; display: flex; align-items: center; justify-content: center;
+    width: 34px; height: 34px; padding: 0; border: none; background: none; cursor: pointer;
+    color: #94A3B8; font-size: 18px;
+  }
+  .inp .eye:hover { color: #475569; }
+
+  /* 验证码行: 右侧"获取验证码"按钮(48px 高, 与输入框同高) */
+  .inp.has-btn input { padding-right: 104px; }
+  .inp .inp-btn {
+    position: absolute; right: 6px; height: 36px; padding: 0 12px;
+    font-size: 12px; font-weight: 500; color: #2563EB; white-space: nowrap;
+    background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 8px; cursor: pointer;
+    transition: background .15s, opacity .15s;
+  }
+  .inp .inp-btn:hover { background: #DBEAFE; }
+  .inp .inp-btn:disabled { opacity: .55; cursor: not-allowed; }
+  /* Turnstile 容器: 居中 + 与输入框同宽, 卡片内连锁高度小一点 */
+  .turnstile-box { min-height: 65px; display: flex; align-items: center; justify-content: center; }
+
+  /* 登录/注册按钮(仅鉴权卡片内): 48px 高、主色、hover 微上浮 */
+  .login-card .btn.primary {
+    height: 48px; width: 100%; padding: 0 16px; font-size: 16px; font-weight: 500;
+    border-radius: 10px; letter-spacing: 4px;
+    background: var(--primary); border-color: var(--primary);
+    box-shadow: 0 8px 20px -8px rgba(37,99,235,.6);
+    transition: background .15s, box-shadow .15s, transform .12s;
+  }
+  .login-card .btn.primary:hover:not(:disabled) { background: var(--primary-hover); border-color: var(--primary-hover); transform: translateY(-1px); }
+  .login-card .btn.primary:active:not(:disabled) { background: var(--primary-active); border-color: var(--primary-active); transform: translateY(0); }
+  .login-card .btn.primary .spin {
+    width: 16px; height: 16px; border: 2px solid rgba(255,255,255,.45); border-top-color: #fff;
+    border-radius: 50%; animation: spin .7s linear infinite; margin-right: 8px;
+  }
+
+  /* 切换条(去注册 / 去登录) */
   .auth-switch {
-    margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border);
-    text-align: center; font-size: 13px; color: var(--muted);
+    margin-top: 20px; padding-top: 16px; border-top: 1px solid #E2E8F0;
+    text-align: center; font-size: 13px; color: var(--text-secondary);
   }
-  .auth-switch a { cursor: pointer; font-weight: 600; margin-left: 4px; text-decoration: none; }
+  .auth-switch a { cursor: pointer; font-weight: 600; margin-left: 4px; color: var(--primary); text-decoration: none; }
   .auth-switch a:hover { text-decoration: underline; }
-  /* 表单上方的结果横幅(注册成功后跳回登录页时用来提示) */
-  .banner { border-radius: 6px; padding: 9px 12px; font-size: 12px; line-height: 1.6; margin-bottom: 16px; }
-  .banner.ok { background: #d1fae5; color: #065f46; }
-  .banner.err { background: #fee2e2; color: #991b1b; }
+
+  /* 表单上方提示横幅(注册成功 / 登录失败) */
+  .banner { border-radius: 8px; padding: 10px 13px; font-size: 13px; line-height: 1.6; margin-bottom: 18px; }
+  .banner.ok { background: #d1fae5; color: #065f46; border: 1px solid #a7f3d0; }
+  .banner.err { background: #FEF2F2; color: #DC2626; border: 1px solid #FECACA; }
+  .banner.err::before { content: '⚠ '; font-weight: 700; }
+
+  /* 鉴权页底部版权 */
+  .auth-footer {
+    position: fixed; left: 0; right: 0; bottom: 16px; text-align: center;
+    font-size: 12px; color: rgba(255,255,255,.55); pointer-events: none;
+  }
+
+  /* 主界面淡入(登录成功 / 已登录直接进入) */
+  #app-view { animation: fadeIn .25s ease; }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+  /* 窄屏适配: 卡片左右留 16px, 内边距收敛, 输入框仍保持 48px 触控高度 */
+  @media (max-width: 480px) {
+    #boot-view, #login-view, #register-view { padding: 16px; }
+    .login-card { padding: 30px 22px; }
+    .welcome { font-size: 23px; }
+  }
+  /* 注册页字段较多, 矮屏 / 小屏下改为顶部对齐并允许卡片区域滚动, 避免被裁切 */
+  @media (max-height: 760px), (max-width: 480px) {
+    #register-view { align-items: flex-start; padding-top: 28px; padding-bottom: 64px; overflow-y: auto; }
+  }
 
   /* 主布局 —— 整屏不滚动: 顶栏固定, 左导航与右内容各自独立滚动 */
   /* 主界面整体白底(登录/注册页仍用 --bg 浅灰, 衬白色登录卡)。
@@ -208,7 +360,6 @@ const ADMIN_HTML = `<!DOCTYPE html>
   .nav-item[data-page="board"]::before     { content: '\uD83D\uDCC8'; }
   .nav-item[data-page="keys"]::before      { content: '\uD83D\uDD10'; }
   .nav-item[data-page="accounts"]::before  { content: '\u2601\uFE0F'; }
-  .nav-item[data-page="aliases"]::before   { content: '\uD83C\uDFF7\uFE0F'; }
   .nav-item[data-page="groups"]::before    { content: '\uD83D\uDCC1'; }
   .nav-item[data-page="users"]::before     { content: '\uD83D\uDC65'; }
   .nav-item[data-page="models"]::before    { content: '\uD83D\uDCB0'; }
@@ -313,12 +464,26 @@ const ADMIN_HTML = `<!DOCTYPE html>
   th, td { padding: 11px 14px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
   th {
     background: #f8fafc; color: #64748b; font-weight: 600; font-size: 11.5px;
-    letter-spacing: .03em; position: sticky; top: 0; z-index: 1;
+    letter-spacing: .03em;
   }
   tbody tr { transition: background .12s; }
   tbody tr:last-child td { border-bottom: none; }
   tbody tr:hover { background: #f8fafc; }
   td.wrap { white-space: normal; max-width: 320px; word-break: break-all; }
+
+  /* 操作列右侧固定 —— 宽表(如用户管理 13 列)横向滚动时, 最右的「操作」列
+     会被挤出视口, 删除/编辑按钮看不见。给 th/td 加 .ops-sticky 让它钉在右侧:
+     - 必须有不透明背景(白/hover 灰), 否则滚动时底下列内容会穿透;
+     - 左侧投影提示"这里还能往左滚"。
+     2026-09-24 用户管理页删除按钮"看不见"就是它 —— 线上踩过。 */
+  th.ops-sticky, td.ops-sticky {
+    position: sticky; right: 0;
+    background: #fff;
+    box-shadow: -6px 0 8px -6px rgba(15, 23, 42, .18);
+  }
+  th.ops-sticky { z-index: 2; }
+  td.ops-sticky { z-index: 1; }
+  tbody tr:hover td.ops-sticky { background: #f8fafc; }
 
   /* 批量选择列 —— 表格首列的复选框(超管删日志/审计用)。
      列宽压到最窄, 表头那个是「全选本页」。 */
@@ -457,10 +622,14 @@ const ADMIN_HTML = `<!DOCTYPE html>
   .filter-item.date input { min-width: 140px; }
   .filter-actions { display: flex; gap: 8px; margin-left: auto; align-items: flex-end; }
 
-  /* 表格容器(横向滚动) */
+  /* 表格容器: 只横向滚动。纵向让表格随页面整体滚(配合 tab 固定)。
+     2026-09-24: 用户要求 tab 下方内容整体滚动, 表格不要独立滚动条。
+     去掉 max-height 后 .table-wrap 不再是纵向滚动容器, 表头 th 的 sticky top:0
+     失去参照物(会透到 .main 顶部和 tab 重叠), 所以 th 改 position:static。
+     操作列 .ops-sticky 是横向 sticky(right:0), 不受影响。 */
   .table-wrap { overflow-x: auto; }
 
-  /* 标签页 —— 一页多视图时用(如「模型获取与定价」的 别名 / 定价)。
+  /* 标签页 —— 一页多视图时用(如「模型管理」的 别名 / 定价)。
      用下边框指示当前项, 视觉语言与 .panel / .page-head 保持一致。
      ⚠️ 标签项**不要**写成 data-page —— 那是侧栏菜单键, 会被角色守卫
      当成"侧栏多了一个菜单项"而报错。这里统一用 data-mtab。 */
@@ -476,6 +645,24 @@ const ADMIN_HTML = `<!DOCTYPE html>
   }
   .page-tab:hover { color: var(--text); }
   .page-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* 顶部固定标签页 —— 页面滚动时标签条钉在内容区顶部, 内容区独立滚动。
+     用 sticky 让 .page-tabs 在 .main 滚动到顶时贴住, 背景白 + 阴影压住下方内容。
+     ⚠️ 必须给 z-index + 背景色, 否则内容会透上来(踩过的坑: 没背景色时阴影
+     看着正常但标签文字被内容盖住, 极难排查)。 */
+  .page-tabs.sticky {
+    position: sticky; top: 0; z-index: 5;
+    background: #fff; box-shadow: 0 2px 6px -4px rgba(15, 23, 42, .18);
+    margin: 0 -32px 16px -32px; padding: 0 32px;
+  }
+  /* 🚨 带 .sticky 标签条的页面, 标题栏必须摘掉 sticky(.page-head.no-stick):
+     .page-head 自己也是 sticky top:0, 两个吸顶元素钉在同一位置 —— 标题栏
+     (padding 22px, 比 tab 条高)的下半截会从 tab 条底下露出来, 盖不住。
+     摘掉后标题随内容滚走, 只留 tab 条吸顶, 视觉才干净。 */
+  .page-head.no-stick {
+    position: static;
+    background: none;
+  }
 
   /* 分页 */
   .pager {
@@ -837,9 +1024,10 @@ const ADMIN_HTML = `<!DOCTYPE html>
 <div id="boot-view">
   <div class="login-card boot-card">
     <div class="spinner"></div>
-    <p class="boot-t">正在验证登录状态…</p>
-    <p class="boot-s">验证通过会直接回到你刚才的页面</p>
+    <p class="boot-t">正在加载<span class="boot-dots"><i></i><i></i><i></i></span></p>
+    <p class="boot-s">请稍候</p>
   </div>
+  <div class="auth-footer">© 2026 sub2api 控制台</div>
 </div>
 
 <!-- ============ 登录页 ============ -->
@@ -847,21 +1035,33 @@ const ADMIN_HTML = `<!DOCTYPE html>
      所以这里刻意不写「管理员登录」之类字样 —— 写死了会让人以为业务用户没入口。 -->
 <div id="login-view">
   <div class="login-card">
-    <h1>sub2api 控制台</h1>
-    <p class="sub">使用你的账号登录(用户名或邮箱)</p>
+    <div class="brand-block">
+      <div class="login-logo">S</div>
+      <div class="brand-name">sub2api</div>
+      <div class="brand-tag">Workers 版 AI 网关控制台</div>
+    </div>
+    <h2 class="welcome">欢迎回来</h2>
+    <p class="sub">登录您的账户，继续使用 sub2api 控制台</p>
     <div id="login-banner" class="banner ok" style="display:none"></div>
     <div class="field">
-      <label for="login-user">用户名 / 邮箱</label>
-      <input id="login-user" autocomplete="username" placeholder="admin 或 you@example.com">
+      <label for="login-user">账号</label>
+      <div class="inp has-ico">
+        <span class="ico">👤</span>
+        <input id="login-user" autocomplete="username" placeholder="请输入账号（用户名或邮箱）">
+      </div>
     </div>
     <div class="field">
       <label for="login-pass">密码</label>
-      <input id="login-pass" type="password" autocomplete="current-password" placeholder="••••••••">
+      <div class="inp has-ico has-eye">
+        <span class="ico">🔒</span>
+        <input id="login-pass" type="password" autocomplete="current-password" placeholder="请输入密码">
+        <button type="button" class="eye" id="login-eye" aria-label="显示或隐藏密码">👁</button>
+      </div>
     </div>
-    <button class="btn primary" id="login-btn" style="width:100%">登录</button>
-    <p id="login-err" style="color:var(--danger);font-size:12px;margin-top:12px;min-height:16px"></p>
+    <button class="btn primary" id="login-btn">登 录</button>
     <div class="auth-switch" id="login-switch">还没有账号?<a id="go-register">立即注册</a></div>
   </div>
+  <div class="auth-footer">© 2026 sub2api 控制台</div>
 </div>
 
 <!-- ============ 注册页 ============ -->
@@ -869,28 +1069,49 @@ const ADMIN_HTML = `<!DOCTYPE html>
      邮箱填进登录框 —— 用户注册完的下一步必然是登录, 不该让他再手输一遍。 -->
 <div id="register-view">
   <div class="login-card">
-    <h1>创建账号</h1>
-    <p class="sub">注册后即可登录, 自助创建属于你的 API Key</p>
+    <div class="brand-block">
+      <div class="login-logo">S</div>
+      <div class="brand-name">sub2api</div>
+      <div class="brand-tag">Workers 版 AI 网关控制台</div>
+    </div>
+    <h2 class="welcome">创建账号</h2>
+    <p class="sub">注册后即可登录，自助创建属于你的 API Key</p>
+    <div id="reg-banner" class="banner err" style="display:none"></div>
     <div class="field">
       <label for="reg-email">邮箱</label>
-      <input id="reg-email" type="email" autocomplete="email" placeholder="you@example.com">
+      <div class="inp has-ico"><span class="ico">📧</span><input id="reg-email" type="email" autocomplete="email" placeholder="请输入邮箱"></div>
     </div>
     <div class="field">
       <label for="reg-user">用户名 <span class="muted" style="font-weight:400">(可选)</span></label>
-      <input id="reg-user" autocomplete="username" placeholder="留空则用邮箱作为用户名">
+      <div class="inp has-ico"><span class="ico">👤</span><input id="reg-user" autocomplete="username" placeholder="留空则用邮箱作为用户名"></div>
     </div>
     <div class="field">
       <label for="reg-pass">密码</label>
-      <input id="reg-pass" type="password" autocomplete="new-password" placeholder="至少 8 位">
+      <div class="inp has-ico has-eye"><span class="ico">🔒</span><input id="reg-pass" type="password" autocomplete="new-password" placeholder="至少 8 位"><button type="button" class="eye" id="reg-eye" data-eye="reg-pass">👁</button></div>
     </div>
     <div class="field">
       <label for="reg-pass2">确认密码</label>
-      <input id="reg-pass2" type="password" autocomplete="new-password" placeholder="再输一次">
+      <div class="inp has-ico has-eye"><span class="ico">🔒</span><input id="reg-pass2" type="password" autocomplete="new-password" placeholder="再输一次"><button type="button" class="eye" id="reg-eye2" data-eye="reg-pass2">👁</button></div>
     </div>
-    <button class="btn primary" id="reg-btn" style="width:100%">注册</button>
-    <p id="reg-err" style="color:var(--danger);font-size:12px;margin-top:12px;min-height:16px"></p>
+    <!-- Turnstile(Token B, 注册专用)。仅当后端配置了 key 才显示; 未配置时整块隐藏,
+         注册仍按旧流程(不加验证码)走。 -->
+    <div class="field" id="reg-ts-wrap" style="display:none">
+      <div class="turnstile-box" id="reg-ts-reg"></div>
+    </div>
+    <!-- 验证码行: 与 Turnstile 联动。未配置时隐藏。 -->
+    <div class="field" id="reg-code-wrap" style="display:none">
+      <label for="reg-code">邮箱验证码</label>
+      <div class="inp has-ico has-btn"><span class="ico">✉️</span><input id="reg-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6 位验证码"><button type="button" class="inp-btn" id="reg-send-code">获取验证码</button></div>
+    </div>
+    <!-- 第二个 Turnstile(Token B, 注册时用)。显式渲染, 与上面的 Token A 分离,
+         防止用发码的 token 直接注册。 -->
+    <div class="field" id="reg-ts2-wrap" style="display:none">
+      <div class="turnstile-box" id="reg-ts-reg2"></div>
+    </div>
+    <button class="btn primary" id="reg-btn">注 册</button>
     <div class="auth-switch">已有账号?<a id="go-login">去登录</a></div>
   </div>
+  <div class="auth-footer">© 2026 sub2api 控制台</div>
 </div>
 
 <!-- ============ 主界面 ============ -->
@@ -926,10 +1147,9 @@ const ADMIN_HTML = `<!DOCTYPE html>
       <button class="nav-item" data-page="board">数据看板</button>
       <button class="nav-item" data-page="keys">API Key</button>
       <button class="nav-item" data-page="accounts">上游账号</button>
-      <button class="nav-item" data-page="aliases">模型别名</button>
       <button class="nav-item" data-page="groups">分组</button>
       <button class="nav-item" data-page="users">用户</button>
-      <button class="nav-item" data-page="models">模型定价</button>
+      <button class="nav-item" data-page="models">模型管理</button>
       <button class="nav-item" data-page="usage">请求日志</button>
       <button class="nav-item" data-page="audit">操作审计</button>
       <button class="nav-item" data-page="announce">公告管理</button>
@@ -1192,6 +1412,8 @@ function showRegister(push) {
   $('#login-view').style.display = 'none';
   $('#app-view').style.display = 'none';
   $('#register-view').style.display = 'flex';
+  // 进了注册视图才真正渲染 Turnstile(依赖后端配置, 可能异步到达)
+  if (regTsNeeded && regTsSiteKey) syncRegVerifyUI();
   const el = $('#reg-email');
   if (el) el.focus();
 }
@@ -1282,6 +1504,16 @@ $('#login-btn').addEventListener('click', doLogin);
 $('#login-pass').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
 $('#login-user').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#login-pass').focus(); });
 
+// 密码明文 / 密文切换(右侧眼睛图标)
+$('#login-eye').addEventListener('click', () => {
+  const inp = $('#login-pass');
+  const eye = $('#login-eye');
+  if (!inp || !eye) return;
+  const show = inp.type === 'password';
+  inp.type = show ? 'text' : 'password';
+  eye.textContent = show ? '🙈' : '👁';
+});
+
 // ---- 登录 / 注册 互跳 ----
 // 注册入口**可用性由服务端决定**: 管理员关掉注册后, 这里把链接藏掉(后端还会再拦一道 403)。
 const registrationState = { enabled: true, auto_approve: true, loaded: false };
@@ -1293,13 +1525,162 @@ async function loadRegisterConfig() {
     registrationState.enabled = d.enabled !== false;
     registrationState.auto_approve = d.auto_approve !== false;
     registrationState.loaded = true;
+    // Turnstile / 验证码: 后端配置了 key 才需要; 否则整块隐藏、按旧流程注册
+    regTsNeeded = d.verification_required === true;
+    regTsSiteKey = d.turnstile_site_key || '';
+    if (regTsNeeded && regTsSiteKey) {
+      ensureTurnstileScript(() => syncRegVerifyUI());
+      // 配置已拿到, 但用户可能还没进注册视图 —— 等 showRegister 时再渲染
+      window.__regTsConfigReady = true;
+    } else {
+      syncRegVerifyUI();
+    }
   } catch (e) { /* 拿不到就按"可用"显示, 真提交时后端还会再判 */ }
   const sw = $('#login-switch');
   if (sw) sw.style.display = registrationState.enabled ? '' : 'none';
 }
 $('#go-register').addEventListener('click', () => { loginBanner(''); showRegister(); });
 $('#go-login').addEventListener('click', () => { showLogin(); });
+// ---- 注册页: Turnstile + 验证码 ----
+// 状态:
+//   regTsNeeded = 后端配置了 Turnstile(需要验证码)
+//   regTsWidA / regTsWidB = 两个显式 widget(发码用 A, 注册用 B; Token 单次使用)
+let regTsNeeded = false;
+let regTsSiteKey = '';
+let regTsWidA = 0;
+let regTsWidB = 0;
+let regSendCountdown = 0;
+let regSendTimer = null;
+
+/** 加载 Turnstile 脚本(一次性)。显式渲染前必须先有 window.turnstile */
+function ensureTurnstileScript(cb) {
+  if (window.turnstile) { cb(); return; }
+  const s = document.createElement('script');
+  s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?onload=wbTurnstileLoaded&render=explicit';
+  s.async = true;
+  window.wbTurnstileLoaded = cb;
+  document.head.appendChild(s);
+}
+
+/** 显示/隐藏注册页的验证码区(依赖后端配置) */
+function syncRegVerifyUI() {
+  const need = regTsNeeded && !!regTsSiteKey;
+  $('#reg-ts-wrap').style.display = need ? '' : 'none';
+  $('#reg-code-wrap').style.display = need ? '' : 'none';
+  $('#reg-ts2-wrap').style.display = need ? '' : 'none';
+  if (!need) {
+    if (regTsWidA !== 0) { try { window.turnstile && window.turnstile.remove(regTsWidA); } catch (e) {} regTsWidA = 0; }
+    if (regTsWidB !== 0) { try { window.turnstile && window.turnstile.remove(regTsWidB); } catch (e) {} regTsWidB = 0; }
+    return;
+  }
+  requestAnimationFrame(() => {
+    if (!window.turnstile) return;
+    // Token A: 发送验证码
+    if (!regTsWidA && $('#reg-ts-reg')) {
+      regTsWidA = window.turnstile.render($('#reg-ts-reg'), {
+        sitekey: regTsSiteKey,
+        action: 'send_verify_code',
+        callback: () => { /* token 由 doSendCode 读取 */ },
+        'expired-callback': () => { try { window.turnstile.reset(regTsWidA); } catch (e) {} },
+      });
+    }
+    // Token B: 注册
+    if (!regTsWidB && $('#reg-ts-reg2')) {
+      regTsWidB = window.turnstile.render($('#reg-ts-reg2'), {
+        sitekey: regTsSiteKey,
+        action: 'register',
+        callback: () => { /* doRegister 读取 */ },
+        'expired-callback': () => { try { window.turnstile.reset(regTsWidB); } catch (e) {} },
+      });
+    }
+  });
+}
+
+/** 60s 倒计时按钮 */
+function startRegSendCount() {
+  if (regSendTimer) clearInterval(regSendTimer);
+  const btn = $('#reg-send-code');
+  if (!btn) return;
+  btn.disabled = true;
+  btn.textContent = '60s';
+  regSendCountdown = 60;
+  regSendTimer = setInterval(() => {
+    regSendCountdown -= 1;
+    if (regSendCountdown <= 0) {
+      clearInterval(regSendTimer); regSendTimer = null;
+      btn.disabled = false; btn.textContent = '重新获取';
+    } else {
+      btn.textContent = regSendCountdown + 's';
+    }
+  }, 1000);
+}
+
+/** 获取验证码 */
+async function doSendCode() {
+  const email = $('#reg-email').value.trim();
+  if (!email) { regBanner('请先填写邮箱'); return; }
+  const btn = $('#reg-send-code');
+  if (btn.disabled) return; // 倒计时中禁止重复点
+
+  // 取 Token A
+  let token = '';
+  if (typeof window.turnstile !== 'undefined' && regTsWidA) {
+    token = window.turnstile.getResponse(regTsWidA) || '';
+  }
+  // Token A 必须存在 —— 没有就弹提示让用户先过验证
+  if (regTsNeeded && !token) {
+    regBanner('请先完成安全验证');
+    return;
+  }
+
+  setBtnLoading(btn, true, '发送中…');
+  regBanner('');
+  try {
+    const res = await fetch('/api/auth/send-verify-code', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email, purpose: 'REGISTER', turnstile_token: token || undefined }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data.error && data.error.message) || '发送失败');
+    // 成功: 起倒计时 + 重置 Token A(单次使用)
+    startRegSendCount();
+    if (regTsWidA) { try { window.turnstile.reset(regTsWidA); } catch (e) {} }
+    regBanner(data.debug_code ? ('测试环境验证码: ' + data.debug_code) : '验证码已发送，请查收邮箱', 'ok');
+  } catch (e) {
+    regBanner(e.message);
+  } finally {
+    setBtnLoading(btn, false, '获取验证码');
+  }
+}
+
+// 监听: 获取验证码 / 回车提交
+$('#reg-send-code').addEventListener('click', doSendCode);
+// 🚨 注册主按钮必须绑 click —— 漏绑时点击完全无反应(不报错、不发请求),
+//    只有确认密码框回车才能注册, 极难察觉(2026-09-23 线上踩过)。
+$('#reg-btn').addEventListener('click', doRegister);
+// 验证码回车也提交
+$('#reg-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') doRegister(); });
 $('#reg-pass2').addEventListener('keydown', (e) => { if (e.key === 'Enter') doRegister(); });
+
+// 注册页: 两个密码框的明文 / 密文切换(右侧眼睛图标)
+function bindRegEye(eyeId) {
+  const eye = $(eyeId);
+  if (!eye) return;
+  eye.addEventListener('click', () => {
+    const inp = $('#' + eye.getAttribute('data-eye'));
+    if (!inp) return;
+    const show = inp.type === 'password';
+    inp.type = show ? 'text' : 'password';
+    eye.textContent = show ? '🙈' : '👁';
+  });
+}
+bindRegEye('#reg-eye');
+bindRegEye('#reg-eye2');
+// 注册页: 任意输入框回车顺次聚焦, 最后一个回车直接提交
+$('#reg-email').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#reg-user').focus(); });
+$('#reg-user').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#reg-pass').focus(); });
+$('#reg-pass').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#reg-pass2').focus(); });
 
 async function doRegister() {
   const btn = $('#reg-btn');
@@ -1307,20 +1688,33 @@ async function doRegister() {
   const username = $('#reg-user').value.trim();
   const p1 = $('#reg-pass').value;
   const p2 = $('#reg-pass2').value;
-  const err = $('#reg-err');
-  err.textContent = '';
+  regBanner('');
 
-  if (!email) { err.textContent = '请填写邮箱'; return; }
-  if (p1.length < MIN_PASSWORD_LEN) { err.textContent = '密码至少 ' + MIN_PASSWORD_LEN + ' 位'; return; }
-  if (p1 !== p2) { err.textContent = '两次输入的密码不一致'; return; }
+  if (!email) { regBanner('请填写邮箱'); return; }
+  if (p1.length < MIN_PASSWORD_LEN) { regBanner('密码至少 ' + MIN_PASSWORD_LEN + ' 位'); return; }
+  if (p1 !== p2) { regBanner('两次输入的密码不一致'); return; }
 
-  btn.disabled = true; btn.textContent = '注册中…';
+  // 需要验证码的场景: 收集 Token B + 验证码
+  let body = { email, username, password: p1 };
+  if (regTsNeeded) {
+    const code = $('#reg-code').value.trim();
+    if (!code || !/^\\d{6}$/.test(code)) { regBanner('请填写 6 位验证码'); return; }
+    // Token B(注册专用)必须存在 —— 没有就先过人机
+    let tok = '';
+    if (typeof window.turnstile !== 'undefined' && regTsWidB) {
+      tok = window.turnstile.getResponse(regTsWidB) || '';
+    }
+    if (!tok) { regBanner('请先完成安全验证'); return; }
+    body = { email, username, password: p1, verify_code: code, turnstile_token: tok };
+  }
+
+  setBtnLoading(btn, true, '注册中…');
   startProgress();
   try {
     const res = await fetch('/api/admin/register', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ email, username, password: p1 }),
+      body: JSON.stringify(body),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error((data.error && data.error.message) || '注册失败');
@@ -1339,22 +1733,41 @@ async function doRegister() {
     $('#login-pass').focus();
     toast('注册成功');
   } catch (e) {
-    err.textContent = e.message;
+    regBanner(e.message);
   } finally {
     stopProgress();
-    btn.disabled = false; btn.textContent = '注册';
+    setBtnLoading(btn, false, '注 册');
   }
+}
+
+/** 登录/注册按钮的 loading 态: 转圈 + "正在登录…" / "注册中…"。
+   不写裸 textContent, 而是用 <span class="spin"> 让按钮带一个内联小转圈。 */
+function setBtnLoading(btn, loading, label) {
+  if (!btn) return;
+  if (loading) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spin"></span>' + (label || '正在登录…');
+  } else {
+    btn.disabled = false;
+    btn.textContent = label || '登 录';
+  }
+}
+
+/** 注册页表单上方错误横幅(与登录页 .banner.err 统一风格) */
+function regBanner(msg) {
+  const el = $('#reg-banner');
+  if (!el) return;
+  if (msg) { el.textContent = msg; el.style.display = ''; }
+  else { el.textContent = ''; el.style.display = 'none'; }
 }
 
 async function doLogin() {
   const btn = $('#login-btn');
   const username = $('#login-user').value.trim();
   const password = $('#login-pass').value;
-  const err = $('#login-err');
-  err.textContent = '';
-  if (!username || !password) { err.textContent = '请输入用户名和密码'; return; }
+  if (!username || !password) { loginBanner('请输入账号和密码', 'err'); return; }
 
-  btn.disabled = true; btn.textContent = '登录中…';
+  setBtnLoading(btn, true);
   startProgress();
   try {
     const res = await fetch('/api/admin/login', {
@@ -1378,10 +1791,10 @@ async function doLogin() {
     // **不 await**: 公告拉取失败/慢不该拖住登录流程(它自己内部已吞异常)。
     maybeAnnounce();
   } catch (e) {
-    err.textContent = e.message;
+    loginBanner(e.message || '登录失败', 'err');
   } finally {
     stopProgress();
-    btn.disabled = false; btn.textContent = '登录';
+    setBtnLoading(btn, false);
   }
 }
 
@@ -1396,8 +1809,8 @@ const ADMIN_BASE = '';
 const PAGE_TITLES = {
   overview: '概览', dashboard: '总览', board: '数据看板', mykeys: 'API秘钥',
   keys: 'API Key', accounts: '上游账号',
-  aliases: '模型别名', groups: '分组', users: '用户',
-  models: '模型定价', logs: '使用日志', usage: '请求日志', audit: '操作审计',
+  groups: '分组', users: '用户',
+  models: '模型管理', logs: '使用日志', usage: '请求日志', audit: '操作审计',
   announce: '公告管理',
   roles: '角色权限', profile: '个人资料', settings: '设置',
 };
@@ -1567,9 +1980,9 @@ PAGES.keys = async () => {
   $('#main').innerHTML =
     '<div class="page-head"><h2>API Key 管理</h2><div class="actions">' +
       '<button class="btn primary" id="btn-new-key">新建 Key</button></div></div>' +
-    '<div class="panel"><table><thead><tr>' +
+    '<div class="panel"><div class="table-wrap"><table><thead><tr>' +
       '<th>Key</th><th>名称</th><th>所属用户</th><th>分组</th><th>状态</th><th>额度(已用/上限)</th><th>最近使用 (UTC+8)</th><th>操作</th>' +
-    '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+    '</tr></thead><tbody>' + rows + '</tbody></table></div></div>';
 
   $('#btn-new-key').addEventListener('click', () => keyForm(null, d, g));
   document.querySelectorAll('[data-edit-key]').forEach((el) => {
@@ -1722,9 +2135,9 @@ PAGES.accounts = async () => {
     '<div class="page-head"><h2>上游账号管理</h2><div class="actions">' +
       '<button class="btn" id="btn-clear-sticky" title="账号改了配置但请求还走旧账号? 点这里立即失效(粘性会话默认缓存1小时)">清空粘性会话</button>' +
       '<button class="btn primary" id="btn-new-acct">添加上游账号</button></div></div>' +
-    '<div class="panel"><table><thead><tr>' +
+    '<div class="panel"><div class="table-wrap"><table><thead><tr>' +
       '<th>名称</th><th>平台</th><th>入口路径</th><th>协议</th><th>凭证</th><th>优先级</th><th>并发</th><th>状态</th><th>连通性</th><th>操作</th>' +
-    '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+    '</tr></thead><tbody>' + rows + '</tbody></table></div></div>';
 
   $('#btn-clear-sticky').addEventListener('click', async (e) => {
     const btn = e.currentTarget;
@@ -1847,12 +2260,12 @@ function acctForm(a, d, g) {
         '小写字母/数字/下划线/连字符, 不能是 <code>v1</code> / <code>models</code> 这类保留路径。<br>' +
         '留空 = 仍按模型名(账号模型索引 / 分组重定向)自动判定。' +
       '</div></div>' +
-    // 模型别名输入框已移除(2026-09-21): 账号级别名统一到「模型别名」菜单页管理。
+    // 模型别名输入框已移除(2026-09-21): 账号级别名统一到「模型管理」页的「模型别名」标签管理。
     // 这里**不能**再往 payload 里塞 model_aliases —— 后端的语义是"字段出现即整表替换",
     // 一旦提交(哪怕是 null)就会把该账号已有的别名全清掉, 表现为"编辑一次账号, 别名全没了"。
     '<div class="form-row"><label>模型别名</label>' +
       '<div class="muted" style="font-size:12px">' +
-        '本账号的别名请在 <b>「模型别名」</b> 页统一管理(那里能按账号增删改, 还能看到对端模型名)。' +
+        '本账号的别名请在 <b>「模型管理」页 → 「模型别名」标签</b> 统一管理(那里能按账号增删改, 还能看到对端模型名)。' +
         '此处不再编辑, 以免"保存账号"时误清已有别名。' +
       '</div></div>' +
     '<div class="grid2">' +
@@ -1943,7 +2356,7 @@ function acctForm(a, d, g) {
       }
     }
 
-    // 模型别名不从这里提交 —— 见表单里的说明。账号别名请走「模型别名」页
+    // 模型别名不从这里提交 —— 见表单里的说明。账号别名请走「模型管理」页的「模型别名」标签
     // (那边会 PUT {model_aliases: 整表}), 避免这里提交空值把别名整表清掉。
     const payload = {
       name: $('#a-name').value.trim(),
@@ -2064,6 +2477,8 @@ PAGES.groups = async () => {
       '<td>' + g.key_count + '</td>' +
       '<td>' + st + '</td>' +
       '<td><button class="btn sm" data-bind-grp="' + g.id + '" title="管理该分组绑定的上游账号">上游账号</button> ' +
+          '<button class="btn sm" data-models-grp="' + g.id + '" title="设置本分组可用的模型(保存后用户 /v1/models 按此列表展示)">模型关联' +
+            ((g.model_allowlist || []).length ? ' <span class="tag ok">' + g.model_allowlist.length + '</span>' : '') + '</button> ' +
           '<button class="btn sm" data-edit-grp="' + g.id + '">编辑</button> ' +
           '<button class="btn sm danger" data-del-grp="' + g.id + '">删除</button></td>' +
     '</tr>';
@@ -2072,15 +2487,21 @@ PAGES.groups = async () => {
   $('#main').innerHTML =
     '<div class="page-head"><h2>分组管理</h2><div class="actions">' +
       '<button class="btn primary" id="btn-new-grp">新建分组</button></div></div>' +
-    '<div class="panel"><table><thead><tr>' +
+    '<div class="panel"><div class="table-wrap"><table><thead><tr>' +
       '<th>名称</th><th>描述</th><th>平台</th><th>倍率</th><th>上游账号数</th><th>Key 数</th><th>状态</th><th>操作</th>' +
-    '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+    '</tr></thead><tbody>' + rows + '</tbody></table></div></div>';
 
   $('#btn-new-grp').addEventListener('click', () => groupForm(null, d));
   document.querySelectorAll('[data-bind-grp]').forEach((el) => {
     el.addEventListener('click', () => {
       const g = d.groups.find((x) => x.id === Number(el.dataset.bindGrp));
       groupAccountsForm(g);
+    });
+  });
+  document.querySelectorAll('[data-models-grp]').forEach((el) => {
+    el.addEventListener('click', () => {
+      const g = d.groups.find((x) => x.id === Number(el.dataset.modelsGrp));
+      groupModelsForm(g);
     });
   });
   document.querySelectorAll('[data-edit-grp]').forEach((el) => {
@@ -2302,6 +2723,229 @@ async function groupAccountsForm(g) {
   });
 }
 
+// ---- 模型关联: 分组 -> 可用模型清单(groups.model_allowlist) ----
+//
+// 用户需求(原话): 「操作列, 新增 模型关联, 点击模型关联, 默认获取当前分组设置的
+// 上游账号所有模型。窗口布局: 按照模型平台tab区分, 可以多选全选。保存之后,
+// 用户使用的时候, 获取的模型就是分组设置的模型关联的列表」。
+//
+// 后端现状正好接得上(零后端改动):
+//   · groups.model_allowlist 字段 + GET/PUT /groups 早就支持;
+//   · GET /v1/models 在 allowlist 非空时按它过滤(src/models.ts) —— 这正是
+//     "用户获取的模型 = 分组模型关联列表";
+//   · 请求侧 403 拦截已随 GROUP_ALLOWLIST_ENABLED=false 停用(gateway.ts),
+//     所以这里只管列表展示, 请求能不能通仍由上游自己判定。
+//   · 全不选保存 = 写 null = 清空白名单 = 不过滤(展示分组内全部模型)。
+async function groupModelsForm(g) {
+  openModal('模型关联 · ' + g.name, loadingHTML(),
+    '<button class="btn" id="m-cancel">取消</button><button class="btn primary" id="m-save">保存关联</button>',
+    { wide: true });
+  // 先挂上取消 —— 加载期间也要能关掉弹窗
+  $('#m-cancel').addEventListener('click', closeModal);
+
+  let dGrp, dAcct;
+  try {
+    [dGrp, dAcct] = await Promise.all([
+      api('/groups/' + g.id + '/accounts'),
+      api('/accounts'),
+    ]);
+  } catch (e) {
+    const bodyEl0 = document.querySelector('.modal-body');
+    if (bodyEl0) bodyEl0.innerHTML = '<div class="empty">加载失败: ' + esc(e.message) + '</div>';
+    return;
+  }
+
+  // 只取**绑定到本分组**的账号, 收集它们声明的模型: 「模型获取」写进的
+  // model_index + 账号级别名(对外名)。口径与 /v1/models 一致 —— 都是
+  // "分组内账号声明的名字"(含冷却中的账号, 与 loadGroupAccounts 口径相同)。
+  const boundIds = new Set((dGrp.accounts || []).filter((a) => a.bound).map((a) => a.id));
+  const accts = (dAcct.accounts || []).filter((a) => boundIds.has(a.id) && a.platform);
+
+  // platform -> Map(模型原名 -> 原名)。2026-09-24 起严格区分大小写、按平台
+  // 独立: 同名模型在不同平台是不同条目, 唯一 id = 平台::模型(用户原话:
+  // 「不要我选择了glm-5.5, 只要平台有的都选了, 应该用 平台+模型 作为唯一id」)。
+  const byPlatform = {};
+  for (const a of accts) {
+    let list = a.model_index;
+    if (typeof list === 'string') { try { list = JSON.parse(list); } catch (e) { list = []; } }
+    const map = byPlatform[a.platform] || (byPlatform[a.platform] = new Map());
+    for (const m of (Array.isArray(list) ? list : [])) {
+      const k = String(m || '').trim(); if (k) map.set(k, k);
+    }
+    const al = a.model_aliases;
+    if (al && typeof al === 'object') {
+      for (const k of Object.keys(al)) { const kk = String(k || '').trim(); if (kk) map.set(kk, kk); }
+    }
+  }
+
+  // 已选状态: cur = Map('平台::模型' -> 保存条目字符串); orphanSel = 候选里
+  // 找不到、原样保留的旧条目(勾着才会保存)。旧格式纯模型名按大小写不敏感
+  // 匹配全部平台候选(旧语义=对所有平台生效), 保存时升级为 平台::模型。
+  const cur = new Map();
+  const orphanSel = new Set();
+  const parseEntry = (e) => {
+    const s = String(e || '').trim();
+    const i = s.indexOf('::');
+    if (i > 0) return { platform: s.slice(0, i).trim(), model: s.slice(i + 2).trim() };
+    return null;
+  };
+  for (const e0 of (g.model_allowlist || [])) {
+    const s = String(e0 || '').trim(); if (!s) continue;
+    const p = parseEntry(s);
+    if (p) {
+      const m = byPlatform[p.platform];
+      if (m && m.has(p.model)) cur.set(p.platform + '::' + p.model, s);
+      else orphanSel.add(s);            // 上游已下架/平台改名 -> 其他档原样保留
+    } else {
+      let hit = false;
+      const lower = s.toLowerCase();
+      for (const plat of Object.keys(byPlatform)) {
+        for (const name of byPlatform[plat].keys()) {
+          if (String(name).toLowerCase() === lower) {
+            cur.set(plat + '::' + name, plat + '::' + name);
+            hit = true;
+          }
+        }
+      }
+      if (!hit) orphanSel.add(s);
+    }
+  }
+
+  const bodyEl = document.querySelector('.modal-body');
+  if (!bodyEl) return;
+
+  const plats = Object.keys(byPlatform).sort();
+
+  if (!plats.length && !orphanSel.size) {
+    bodyEl.innerHTML =
+      '<div class="empty">该分组还没有绑定任何有模型的上游账号。<br>' +
+      '先到「上游账号」绑定并跑一次「模型获取」, 再回来设置模型关联。</div>';
+    return;
+  }
+
+  const ORPHAN = '__orphan';
+  let curTab = plats[0] || ORPHAN;
+
+  const tabBtn = (label, key) =>
+    '<button class="page-tab' + (key === curTab ? ' active' : '') + '" data-gmtab="' + key + '">' +
+      esc(label) + '</button>';
+
+  const itemRow = (saveValue, kind) => {
+    // 候选行展示模型原名; 其他档展示条目原样
+    const model = kind === 'cand'
+      ? saveValue.slice(saveValue.indexOf('::') + 2)
+      : saveValue;
+    const checked = kind === 'cand' ? cur.has(saveValue) : orphanSel.has(saveValue);
+    return '<label style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid var(--border);font-weight:400">' +
+      '<input type="checkbox" class="gm-item" data-kind="' + kind + '" value="' + esc(saveValue) + '" style="width:auto"' +
+        (checked ? ' checked' : '') + '>' +
+      '<span class="mono" style="font-size:12px">' + esc(model) + '</span>' +
+    '</label>';
+  };
+
+  const allRow = (n) =>
+    '<label style="display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid var(--border);font-weight:600;background:var(--bg);position:sticky;top:0">' +
+      '<input type="checkbox" id="gm-all" style="width:auto">' +
+      '全选 / 取消全选(本档共 ' + n + ' 个)' +
+    '</label>';
+
+  const renderPanel = () => {
+    const panel = $('#gm-panel');
+    if (!panel) return;
+    if (curTab === ORPHAN) {
+      const items = Array.from(orphanSel);
+      panel.innerHTML = allRow(items.length) +
+        '<div class="muted" style="font-size:12px;padding:6px 0">这些条目在当前候选里已经找不到(上游下架或旧格式手填), 不勾选会在保存时移除。</div>' +
+        items.map((s) => itemRow(s, 'orphan')).join('');
+    } else {
+      const names = Array.from(byPlatform[curTab].keys()).sort();
+      panel.innerHTML = allRow(names.length) +
+        names.map((n) => itemRow(curTab + '::' + n, 'cand')).join('');
+    }
+    syncAllBox();
+  };
+
+  const syncAllBox = () => {
+    const all = $('#gm-all');
+    if (!all) return;
+    const items = Array.from(document.querySelectorAll('.gm-item'));
+    all.checked = items.length > 0 && items.every((el) => el.checked);
+  };
+
+  bodyEl.innerHTML =
+    '<div class="muted" style="font-size:12px;margin-bottom:8px">' +
+      '勾选本分组可用的模型, 按上游平台分档, 支持逐档全选。' +
+      '<b>唯一 id = 平台::模型</b> —— 同名模型在不同平台互不影响, 且区分大小写。' +
+      '保存后, 该分组用户的 <code>/v1/models</code> 只展示勾选的模型(按平台过滤)。' +
+      '<b>全部不选 = 不过滤</b>(展示分组内全部模型)。' +
+      '当前已选: <b id="gm-count">' + (cur.size + orphanSel.size) + '</b>' +
+    '</div>' +
+    (plats.length || orphanSel.size
+      ? '<div class="page-tabs" id="gm-tabs" style="margin-bottom:0">' +
+          plats.map((p) => tabBtn(p + ' (' + byPlatform[p].size + ')', p)).join('') +
+          (orphanSel.size ? tabBtn('其他 (' + orphanSel.size + ')', ORPHAN) : '') +
+        '</div>' +
+        '<div id="gm-panel" style="max-height:46vh;overflow-y:auto;border:1px solid var(--border);border-top:0;padding:4px 10px"></div>'
+      : '');
+
+  renderPanel();
+
+  // 勾选状态存在 cur/orphanSel 里 —— 切 tab 重渲染不会丢其它档的勾选
+  // 🚨 这段脚本在模板字面量里是裸 JS(不经过编译), 绝不能写 as/类型注解
+  const applyCheck = (el) => {
+    if (el.dataset.kind === 'cand') {
+      if (el.checked) cur.set(el.value, el.value);
+      else cur.delete(el.value);
+    } else {
+      if (el.checked) orphanSel.add(el.value);
+      else orphanSel.delete(el.value);
+    }
+  };
+  bodyEl.addEventListener('change', (e) => {
+    const t = e.target;
+    if (!t || t.tagName !== 'INPUT') return;
+    if (t.id === 'gm-all') {
+      document.querySelectorAll('.gm-item').forEach((el) => {
+        el.checked = t.checked;
+        applyCheck(el);
+      });
+    } else if (t.classList.contains('gm-item')) {
+      applyCheck(t);
+    } else return;
+    const c = $('#gm-count');
+    if (c) c.textContent = String(cur.size + orphanSel.size);
+    if (t.id !== 'gm-all') syncAllBox();
+  });
+
+  // 切平台档: 只重渲染面板, 不重新取数
+  bodyEl.addEventListener('click', (e) => {
+    const t = e.target;
+    if (!t || !t.closest) return;
+    const tab = t.closest('[data-gmtab]');
+    if (!tab) return;
+    curTab = tab.getAttribute('data-gmtab') || curTab;
+    document.querySelectorAll('#gm-tabs .page-tab').forEach((el) => {
+      el.classList.toggle('active', el.getAttribute('data-gmtab') === curTab);
+    });
+    renderPanel();
+  });
+
+  $('#m-save').addEventListener('click', async () => {
+    // 候选条目 = '平台::模型' 复合格式(后端 /v1/models 按平台过滤);
+    // 其他档原样保留(旧格式/已下架条目)
+    const arr = Array.from(cur.values()).concat(Array.from(orphanSel));
+    try {
+      await api('/groups/' + g.id, {
+        method: 'PUT',
+        body: JSON.stringify({ model_allowlist: arr.length ? arr : null }),
+      });
+      closeModal();
+      toast(arr.length ? '已保存: 关联 ' + arr.length + ' 个模型' : '已清空模型关联(不过滤)');
+      PAGES.groups();
+    } catch (e) { toast(e.message, 'err'); }
+  });
+}
+
 function delGroup(id) {
   openModal('确认删除',
     '<p>确定要删除这个分组吗?使用该分组的 API Key 会失去上游账号。</p>',
@@ -2356,7 +3000,7 @@ PAGES.users = async () => {
         '<td class="muted" title="' + esc(fmtTimeBj(u.created_at)) + '">' + fmtTime(u.created_at) + '</td>' +
         '<td class="muted">' + fmtTime(u.last_login_at) + '</td>' +
         '<td>' + st + '</td>' +
-        '<td><button class="btn sm" data-edit-user="' + u.id + '">编辑</button> ' +
+        '<td class="ops-sticky"><button class="btn sm" data-edit-user="' + u.id + '">编辑</button> ' +
             '<button class="btn sm" data-toggle-user="' + u.id + '">' + (u.status === 'active' ? '停用' : '启用') + '</button> ' +
             '<button class="btn sm danger" data-del-user="' + u.id + '">删除</button></td>' +
       '</tr>';
@@ -2373,16 +3017,19 @@ PAGES.users = async () => {
         ? '<button class="btn warn" id="btn-fix-pwd" title="给这些用户写入默认密码的哈希, 明文不落库">补齐默认密码 (' + noPwd + ')</button>'
         : '') +
       '<button class="btn primary" id="btn-new-user">新建用户</button></div></div>' +
-    '<div class="panel"><table><thead><tr>' +
+    '<div class="panel"><div class="table-wrap"><table><thead><tr>' +
       '<th>ID</th><th>邮箱</th><th>用户名</th><th>角色</th><th>密码</th><th>余额</th><th>并发</th><th>Key</th>' +
-      '<th>平台白名单</th><th>创建时间 (UTC+8)</th><th>最近登录 (UTC+8)</th><th>状态</th><th>操作</th>' +
-    '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
+      '<th>平台白名单</th><th>创建时间 (UTC+8)</th><th>最近登录 (UTC+8)</th><th>状态</th><th class="ops-sticky">操作</th>' +
+    '</tr></thead><tbody>' + rows + '</tbody></table></div></div>' +
     (noPwd
       ? '<p class="hint">有 ' + noPwd + ' 个用户还没有密码(历史数据)。点「补齐默认密码」会写入默认密码 ' +
         '<code>' + esc(PAGES._defaultPwd || '') + '</code> 的 PBKDF2 哈希 —— 数据库里存的只有哈希, 明文不落库。</p>'
       : '') +
     '<p class="hint">新建用户默认使用密码 <code>' + esc(PAGES._defaultPwd || '') + '</code>, ' +
       '弹窗里可以改成别的; 编辑时留空表示不修改。</p>';
+
+  // 供确认删除弹窗取用户信息(id -> email)展示
+  PAGES._lastUsers = d.users || [];
 
   $('#btn-new-user').addEventListener('click', () => userForm(null, d));
   if (noPwd) {
@@ -2447,14 +3094,14 @@ async function userKeysModal(u) {
   const bodyEl = document.querySelector('.modal-body');
   if (!bodyEl) return;
   bodyEl.innerHTML = ks.length
-    ? '<table><thead><tr><th>Key</th><th>名称</th><th>分组</th><th>状态</th><th>最近使用</th></tr></thead><tbody>' +
+    ? '<div class="table-wrap"><table><thead><tr><th>Key</th><th>名称</th><th>分组</th><th>状态</th><th>最近使用</th></tr></thead><tbody>' +
       ks.map((k) =>
         '<tr><td class="mono">' + esc(k.key_masked) + '</td>' +
         '<td>' + esc(k.name || '-') + '</td>' +
         '<td>' + esc(k.group_name || '-') + '</td>' +
         '<td>' + esc(k.status) + '</td>' +
         '<td class="muted">' + fmtTime(k.last_used_at) + '</td></tr>').join('') +
-      '</tbody></table>'
+      '</tbody></table></div>'
     : '<div class="muted">该用户还没有 API Key。</div>';
 
   $('#m-new-key').addEventListener('click', () => {
@@ -2567,14 +3214,25 @@ function userForm(u, d) {
 }
 
 function delUser(id) {
-  openModal('确认删除',
-    '<p>确定要删除这个用户吗?其名下的 API Key 也会一并失效。</p>',
+  const u = (PAGES._lastUsers || []).find((x) => x.id === id);
+  const name = u ? (u.email || ('#' + u.id)) : ('#' + id);
+  openModal('确认删除用户',
+    '<p>确定要删除 <strong>' + esc(name) + '</strong> 吗?该操作<strong>不可恢复</strong>, ' +
+      '会连同以下数据一起<strong>物理删除</strong>:</p>' +
+      '<ul style="margin:8px 0 0 18px;line-height:1.9;font-size:13px">' +
+        '<li>该用户的全部 <strong>API Key</strong></li>' +
+        '<li>该用户的全部 <strong>使用日志</strong>(计费记录)</li>' +
+        '<li>签到记录、邮箱验证码记录</li>' +
+      '</ul>' +
+      '<p class="hint" style="margin-top:8px">删除后该用户无法再登录, 已签发的 Key 立即失效。<br>审计日志会保留这次删除的记录。</p>',
     '<button class="btn" id="m-cancel">取消</button><button class="btn danger" id="m-del">确认删除</button>');
   $('#m-cancel').addEventListener('click', closeModal);
   $('#m-del').addEventListener('click', async () => {
     try {
-      await api('/users/' + id, { method: 'DELETE' });
-      closeModal(); toast('已删除'); PAGES.users();
+      const r = await api('/users/' + id, { method: 'DELETE' });
+      closeModal();
+      toast('已删除' + (r && r.deleted_keys ? ' (连带 ' + r.deleted_keys + ' 个 Key)' : ''));
+      PAGES.users();
     } catch (e) { toast(e.message, 'err'); }
   });
 }
@@ -2638,10 +3296,10 @@ function rolesRender(d) {
   $('#main').innerHTML =
     '<div class="page-head"><h2>角色权限</h2><div class="actions">' +
       '<button class="btn primary" id="btn-new-role">新建角色</button></div></div>' +
-    '<div class="panel"><table><thead><tr>' +
+    '<div class="panel"><div class="table-wrap"><table><thead><tr>' +
       '<th>角色代码</th><th>显示名</th><th>可见菜单</th><th>用户数</th><th>说明</th><th>操作</th>' +
     '</tr></thead><tbody>' + (rows || '<tr><td colspan="6" class="empty">还没有角色</td></tr>') +
-    '</tbody></table></div>' +
+    '</tbody></table></div></div>' +
     '<p class="hint">「可见菜单」既决定账号登录后侧栏显示哪些页面, <strong>也</strong>是后端接口的权限边界 —— ' +
       '菜单藏起来只是看不见, 直接调接口同样会被 403 拦住。修改后立即生效, 用户不需要重新登录。</p>' +
     '<p class="hint">业务用户给「概览 / API秘钥 / 使用日志 / 个人资料」这几个菜单就够了: 它们只能看到自己的额度、Key 与调用记录, ' +
@@ -3366,17 +4024,135 @@ function modelsAliasView(accts) {
     return;
   }
 
+  // 「别名列表」标签页 = 自定义别名扁平表(新增 / 编辑 / 删除在这里)。
+  // 「从上游获取」已拆到「别名设置」标签(modelsAliasFetchView)。
+  PAGES._aliasAccounts = accts;   // aliasForm 弹窗从这里取账号列表
+  const flat = flattenAliases(accts);
+
+  const aliasRows = flat.length
+    ? flat.map((r) =>
+        '<tr>' +
+          '<td><input type="checkbox" class="al-chk" data-acct="' + r.accountId + '" data-alias="' + esc(r.alias) + '" style="width:auto"></td>' +
+          '<td><span class="tag off">' + esc(r.platform) + '</span>' +
+            (r.alias.toLowerCase().startsWith(String(r.platform).toLowerCase() + '-')
+              ? ' <span class="tag ok" title="符合「平台名 + 模型 ID」规范">规范</span>' : '') + '</td>' +
+          '<td>' + esc(r.accountName) + '</td>' +
+          '<td class="mono">' + esc(r.alias) + '</td>' +
+          '<td class="mono">' + esc(r.target) + '</td>' +
+          '<td><button class="btn sm" data-edit-alias="' + r.accountId + '" data-alias="' + esc(r.alias) + '">编辑</button> ' +
+              '<button class="btn sm danger" data-del-alias="' + r.accountId + '" data-alias="' + esc(r.alias) + '">删除</button></td>' +
+        '</tr>').join('')
+    : '<tr><td colspan="6" class="empty">还没有配置别名。点右上角「新增别名」手填, 或到「别名设置」标签从上游批量获取。</td></tr>';
+
+  $('#models-body').innerHTML =
+    // 别名列表(扁平表)
+    '<div class="panel">' +
+      '<div class="panel-title">' +
+        '别名列表 (共 ' + flat.length + ' 个) · 规范 <code>平台名-模型ID</code>(如 <code>sensenova-glm-5.2</code>)' +
+        '<span style="margin-left:auto;display:flex;gap:8px">' +
+          '<button class="btn sm danger" id="btn-batch-del-alias" disabled>批量删除</button>' +
+          '<button class="btn sm primary" id="btn-new-alias">新增别名</button>' +
+        '</span>' +
+      '</div>' +
+      '<div class="table-wrap"><table><thead><tr>' +
+        '<th style="width:36px"><input type="checkbox" id="al-all" style="width:auto" title="全选/全不选"></th>' +
+        '<th>平台</th><th>上游账号</th><th>对外别名</th><th>转发给上游的名字</th><th>操作</th></tr></thead>' +
+      '<tbody>' + aliasRows + '</tbody></table></div>' +
+      '<div class="panel-body">' +
+        '<p class="hint muted">' +
+          '别名的作用: 客户端发「对外别名」, 网关路由到该账号后自动换成「转发给上游的名字」。' +
+          '同一个模型名在多个上游各有各的写法时, 在这里逐个声明即可, 同一平台不会互相打架。<br>' +
+          '<b>别名同时兼作路由依据</b>: 客户端发<b>对外别名</b>时, 会<b>优先选中声明它的这个账号</b> ' +
+          '(因此走的也是该账号的 Base URL) —— 同一平台名下挂了多条中转时, 靠它区分"这个模型该去哪一条"。' +
+          '所以别名不只是单纯的改名, 别忘了它会参与选号。' +
+        '</p>' +
+      '</div>' +
+    '</div>';
+
+  // ===== 扁平表操作: 新增 / 编辑 / 删除 / 批量删除别名 =====
+  $('#btn-new-alias').addEventListener('click', () => aliasForm(null, null, null));
+
+  // 批量删除: 勾选 -> 按账号分组整表替换(model_aliases 是账号级 JSON, 没有逐行 DELETE)
+  const batchBtn = $('#btn-batch-del-alias');
+  const syncBatchBtn = () => {
+    batchBtn.disabled = !document.querySelector('.al-chk:checked');
+  };
+  $('#al-all').addEventListener('change', () => {
+    document.querySelectorAll('.al-chk').forEach((el) => { el.checked = $('#al-all').checked; });
+    syncBatchBtn();
+  });
+  document.querySelectorAll('.al-chk').forEach((el) => {
+    el.addEventListener('change', syncBatchBtn);
+  });
+  batchBtn.addEventListener('click', () => {
+    const sel = Array.from(document.querySelectorAll('.al-chk'))
+      .filter((el) => el.checked)
+      .map((el) => ({ acct: Number(el.dataset.acct), alias: el.dataset.alias }));
+    if (!sel.length) { toast('先勾选要删除的别名', 'err'); return; }
+    // 按账号分组: 一个账号一次 PUT(model_aliases 整表替换)
+    const byAcct = {};
+    sel.forEach((s) => { (byAcct[s.acct] || (byAcct[s.acct] = [])).push(s.alias); });
+    openModal('确认批量删除',
+      '<p>确定删除选中的 <b>' + sel.length + '</b> 个别名吗?(涉及 ' + Object.keys(byAcct).length + ' 个上游账号)</p>' +
+      '<p class="hint muted">删除后客户端将无法再用这些别名路由到对应账号。</p>',
+      '<button class="btn" id="m-cancel">取消</button><button class="btn danger" id="m-del">确认删除</button>');
+    $('#m-cancel').addEventListener('click', closeModal);
+    $('#m-del').addEventListener('click', async () => {
+      let n = 0, fail = 0;
+      for (const idStr of Object.keys(byAcct)) {
+        const a = accts.find((x) => x.id === Number(idStr));
+        if (!a) { fail += byAcct[idStr].length; continue; }
+        const merged = Object.assign({}, a.model_aliases || {});
+        byAcct[idStr].forEach((al) => { delete merged[al]; });
+        try {
+          await api('/accounts/' + a.id, {
+            method: 'PUT',
+            body: JSON.stringify({ model_aliases: merged }),
+          });
+          n += byAcct[idStr].length;
+        } catch (e) { fail += byAcct[idStr].length; }
+      }
+      closeModal();
+      if (fail) toast('已删 ' + n + ' 个, ' + fail + ' 个失败(账号保存出错)', 'err');
+      else toast('已删除 ' + n + ' 个别名');
+      MODELS_TAB = 'alist'; PAGES.models();
+    });
+  });
+
+  document.querySelectorAll('[data-edit-alias]').forEach((el) => {
+    el.addEventListener('click', () => {
+      const a = accts.find((x) => x.id === Number(el.dataset.editAlias));
+      const alias = (el.dataset || {}).alias;
+      aliasForm(a, alias, (a.model_aliases || {})[alias] || '');
+    });
+  });
+  document.querySelectorAll('[data-del-alias]').forEach((el) => {
+    el.addEventListener('click', () => {
+      const a = accts.find((x) => x.id === Number(el.dataset.delAlias));
+      const alias = (el.dataset || {}).alias;
+      if (a && alias) delAlias(a, alias);
+    });
+  });
+}
+
+// ===================== 别名设置(从上游获取并批量新增) =====================
+function modelsAliasFetchView(accts) {
+  if (!accts.length) {
+    $('#models-body').innerHTML =
+      '<div class="panel"><div class="empty">还没有上游账号, 请先到「上游账号」添加。</div></div>';
+    return;
+  }
   const opts = accts.map((a) =>
     '<option value="' + a.id + '">' + esc(a.name) + ' · ' + esc(a.platform) + '</option>').join('');
 
   $('#models-body').innerHTML =
+    // 从上游获取并批量新增别名
     '<div class="panel">' +
-      '<div class="panel-title">从上游拉取真实模型列表</div>' +
-      // 正文必须套 .panel-body: .panel 自己不带内边距, 直接塞文字会贴着边框
+      '<div class="panel-title">从上游获取并批量新增别名</div>' +
       '<div class="panel-body">' +
         '<p class="hint">' +
           '对着某个上游账号发一次 <code>GET 模型列表</code>, 把对方<b>实际提供</b>的模型 ID 抓回来。' +
-          '拿到之后可按「平台名 + 模型 ID」一键生成别名, 写回该账号。' +
+          '拿到之后可按「平台名 + 模型 ID」一键生成别名, 批量写回该账号。' +
           '请求地址取该账号配置的 <b>Base URL</b>(第三方中转); 只有没配 Base URL 时才用官方默认域名。' +
         '</p>' +
         '<div class="form-row" style="max-width:560px">' +
@@ -3418,7 +4194,7 @@ function modelsAliasView(accts) {
           '</div>' +
           '<p class="hint" style="margin:14px 0 0">' +
             '拉不到不代表账号不可用 —— 有些上游压根没实现列模型接口。' +
-            '这时请到「模型别名」页手动为该账号新增别名。' +
+            '这时请用下方「新增别名」手动为该账号新增别名。' +
           '</p>';
         return;
       }
@@ -3481,6 +4257,9 @@ function modelsAliasView(accts) {
       btn.disabled = false; btn.textContent = '保存别名到该账号';
     }
   });
+
+  // 事件绑定: 新增/编辑/删除别名(扁平表) —— 已在 modelsAliasView 里绑定,
+  // 这里不再重复; 本标签页只有「获取+保存」两个按钮。
 }
 
 // ======================= 模型别名 =======================
@@ -3500,64 +4279,8 @@ function flattenAliases(accounts) {
   return out;
 }
 
-PAGES.aliases = async () => {
-  const tok = navTok();
-  $('#main').innerHTML = loadingHTML();
-  const d = await api('/accounts');
-  if (gone(tok)) return;
-  const accounts = d.accounts || [];
-  const flat = flattenAliases(accounts);
-  PAGES._aliasAccounts = accounts;
-
-  const rows = flat.length
-    ? flat.map((r) =>
-        '<tr>' +
-          '<td><span class="tag off">' + esc(r.platform) + '</span>' +
-            (r.alias.toLowerCase().startsWith(String(r.platform).toLowerCase() + '-')
-              ? ' <span class="tag ok" title="符合「平台名 + 模型 ID」规范">规范</span>' : '') + '</td>' +
-          '<td>' + esc(r.accountName) + '</td>' +
-          '<td class="mono">' + esc(r.alias) + '</td>' +
-          '<td class="mono">' + esc(r.target) + '</td>' +
-          '<td><button class="btn sm" data-edit-alias="' + r.accountId + '" data-alias="' + esc(r.alias) + '">编辑</button> ' +
-              '<button class="btn sm danger" data-del-alias="' + r.accountId + '" data-alias="' + esc(r.alias) + '">删除</button></td>' +
-        '</tr>').join('')
-    : '<tr><td colspan="5" class="empty">还没有配置别名。到「模型获取」拉一次上游模型, 或点右上角「新增别名」手填。</td></tr>';
-
-  $('#main').innerHTML =
-    '<div class="page-head"><h2>获取平台模型别名</h2><div class="actions">' +
-      '<button class="btn primary" id="btn-new-alias">新增别名</button></div></div>' +
-    '<div class="panel"><div class="panel-title">' +
-      '共 ' + flat.length + ' 条 · 别名规范 <code>平台名-模型ID</code>(如 <code>sensenova-glm-5.2</code>)' +
-    '</div>' +
-    '<table><thead><tr><th>平台</th><th>上游账号</th><th>对外别名</th><th>转发给上游的名字</th><th>操作</th></tr></thead>' +
-    '<tbody>' + rows + '</tbody></table></div>' +
-    '<p class="hint muted" style="margin-top:10px">' +
-      '别名的作用: 客户端发「对外别名」, 网关路由到该账号后自动换成「转发给上游的名字」。' +
-      '同一个模型名在多个上游各有各的写法时, 在这里逐个上游声明即可, 不会互相打架。<br>' +
-      '<b>别名同时兼作路由依据</b>: 客户端发<b>对外别名</b>时, 会<b>优先选中声明它的这个账号</b> ' +
-      '(因此走的也是该账号的 Base URL) —— 同一个平台名下挂了多条中转时, 就靠它区分"这个模型该去哪一条"。' +
-      '所以别名不是单纯的改名, 别忘了它会参与选号。' +
-      '读起来顺一下: 这里的每一行, 左边决定"请求怎么打进来", 右边决定"转发给上游时叫什么"。' +
-    '</p>';
-
-  $('#btn-new-alias').addEventListener('click', () => aliasForm(null, null, null));
-
-  document.querySelectorAll('[data-edit-alias]').forEach((el) => {
-    el.addEventListener('click', () => {
-      const a = accounts.find((x) => x.id === Number(el.dataset.editAlias));
-      const alias = el.dataset.alias;
-      aliasForm(a, alias, (a.model_aliases || {})[alias] || '');
-    });
-  });
-
-  document.querySelectorAll('[data-del-alias]').forEach((el) => {
-    el.addEventListener('click', () => {
-      const a = accounts.find((x) => x.id === Number(el.dataset.delAlias));
-      const alias = el.dataset.alias;
-      delAlias(a, alias);
-    });
-  });
-};
+// 2026-09-24: 独立「模型别名」页(PAGES.aliases)已并入「模型定价」页的「别名」标签
+// (modelsAliasView 第二个面板), 菜单合并 —— 侧栏不再有单独入口。
 
 /** 新增 / 编辑单条别名。alias 为 null 表示新增 */
 function aliasForm(acct, alias, target) {
@@ -3574,8 +4297,7 @@ function aliasForm(acct, alias, target) {
           (isEdit ? ' disabled' : '') + '>' + acctOpts + '</select></div>'
       : '<div class="form-row"><label>上游账号</label><select id="al-acct" class="mono">' + acctOpts + '</select></div>') +
     '<div class="form-row"><label>对外别名 <span class="muted">(客户端发这个名字)</span></label>' +
-      '<input id="al-alias" class="mono" value="' + esc(alias || '') + '"' + (isEdit ? ' readonly' : '') +
-        ' placeholder="sensenova-glm-5.2"></div>' +
+      '<input id="al-alias" class="mono" value="' + esc(alias || '') + '" placeholder="sensenova-glm-5.2"></div>' +
     '<div class="form-row"><label>转发给上游的名字 <span class="muted">(该上游内部叫法)</span></label>' +
       '<input id="al-target" class="mono" value="' + esc(target || '') + '" placeholder="glm-5.2"></div>' +
     '<p class="hint muted">' +
@@ -3615,7 +4337,15 @@ function aliasForm(acct, alias, target) {
     if (!newTarget) { toast('请填写转发给上游的名字', 'err'); return; }
 
     const merged = Object.assign({}, a.model_aliases || {});
-    // 编辑时别名不可改, 直接覆盖; 新增时写新键
+    // 2026-09-24: 对外别名可改名 —— 改名 = 删旧键 + 写新键(model_aliases 是
+    // 整表替换语义, 只写新键不删旧键会留下旧别名)。改名目标若与**另一个**现存
+    // 别名撞名(大小写不敏感), 拒绝 —— 否则会悄悄覆盖那个别名的指向。
+    if (isEdit && newAlias !== alias) {
+      const clash = Object.keys(merged).some((k) =>
+        k.toLowerCase() === newAlias.toLowerCase() && k !== alias);
+      if (clash) { toast('别名 "' + newAlias + '" 已存在, 请换一个', 'err'); return; }
+      delete merged[alias];
+    }
     merged[newAlias] = newTarget;
 
     try {
@@ -3623,7 +4353,7 @@ function aliasForm(acct, alias, target) {
         method: 'PUT',
         body: JSON.stringify({ model_aliases: merged }),
       });
-      closeModal(); toast('保存成功'); PAGES.aliases();
+      closeModal(); toast('保存成功'); MODELS_TAB = 'alist'; PAGES.models();
     } catch (e) { toast(e.message, 'err'); }
   });
 }
@@ -3641,7 +4371,7 @@ function delAlias(acct, alias) {
         method: 'PUT',
         body: JSON.stringify({ model_aliases: Object.keys(merged).length ? merged : null }),
       });
-      closeModal(); toast('已删除'); PAGES.aliases();
+      closeModal(); toast('已删除'); MODELS_TAB = 'alist'; PAGES.models();
     } catch (e) { toast(e.message, 'err'); }
   });
 }
@@ -3652,34 +4382,38 @@ function delAlias(acct, alias) {
  * 保存别名 / 定价后会调 PAGES.models() 重新渲染整页, 若不记住就会把用户
  * 从「定价」弹回「别名」—— 连续改价时非常烦, 所以用模块级变量存一下。
  */
-let MODELS_TAB = 'alias';
+let MODELS_TAB = 'alist';
 
 PAGES.models = async () => {
   const tok = navTok();
   $('#main').innerHTML = loadingHTML();
-  // 两个标签页共用同一份数据: 别名页要 accounts, 定价页要 models。
+  // 四个标签页共用同一份数据: 别名两页要 accounts, 定价两页要 models。
   // 一次并行取回来, 切标签页就不再发请求了。
   const [da, dm] = await Promise.all([api('/accounts'), api('/models')]);
   if (gone(tok)) return;
 
   const accts = (da.accounts || []).filter((a) => a.platform);
-  const tab = MODELS_TAB === 'price' ? 'price' : 'alias';
+  const tab = ['alist', 'aset', 'price', 'default'].includes(MODELS_TAB) ? MODELS_TAB : 'alist';
 
   $('#main').innerHTML =
-    '<div class="page-head"><h2>模型获取与定价</h2></div>' +
-    '<div class="page-tabs">' +
-      '<button class="page-tab' + (tab === 'alias' ? ' active' : '') + '" data-mtab="alias">别名</button>' +
-      '<button class="page-tab' + (tab === 'price' ? ' active' : '') + '" data-mtab="price">定价</button>' +
+    '<div class="page-head no-stick"><h2>模型管理</h2></div>' +
+    '<div class="page-tabs sticky">' +
+      '<button class="page-tab' + (tab === 'alist' ? ' active' : '') + '" data-mtab="alist">别名列表</button>' +
+      '<button class="page-tab' + (tab === 'aset' ? ' active' : '') + '" data-mtab="aset">别名设置</button>' +
+      '<button class="page-tab' + (tab === 'price' ? ' active' : '') + '" data-mtab="price">模型定价</button>' +
+      '<button class="page-tab' + (tab === 'default' ? ' active' : '') + '" data-mtab="default">默认单价</button>' +
     '</div>' +
     '<div id="models-body"></div>';
 
-  // 切标签页只重渲染正文, 不重新取数(account/model 列表已经在手上)
+  // 切标签页只重渲染正文, 不重新取数(账号/模型列表已经在手上)
   const paint = (which) => {
     MODELS_TAB = which;
     document.querySelectorAll('[data-mtab]').forEach((el) => {
       el.classList.toggle('active', el.dataset.mtab === which);
     });
     if (which === 'price') modelsPricingView(accts, dm);
+    else if (which === 'default') modelsDefaultPriceView(accts, dm);
+    else if (which === 'aset') modelsAliasFetchView(accts);
     else modelsAliasView(accts);
   };
 
@@ -3691,66 +4425,52 @@ PAGES.models = async () => {
 };
 
 /**
- * 「定价」标签页的正文。
+ * 「模型定价」标签页的正文。
  *
  * 用户需求(原话): 「通过上游可以直接获取上游模型, 并一键设置定价; 也可以单独设置定价;
  * 获取不到上游模型的情况, 可以手动新增定价。api 请求花费金额, 严格通过这边的定价操作」。
- * 于是这一页分三块:
- *   ① 默认单价  —— 定价表里没有单独配价的模型按它计费(可配置兜底;
- *                  代码里写死的那套内置价目表已删除, 不再参与计费)
- *   ② 从上游拉模型 + 一键定价 —— 拉回来每行预填单价, 可整批保存也可单行保存
- *   ③ 已单独定价的模型清单 —— 手动新增 / 编辑 / 删除(拉不到上游时的唯一入口)
+ * 于是这一页分两块:
+ *   ① 从上游拉模型 + 一键定价 —— 拉回来每行预填单价, 可整批保存也可单行保存
+ *   ② 已单独定价的模型清单 —— 手动新增 / 编辑 / 删除(拉不到上游时的唯一入口)
  *
+ * 「默认单价」是独立标签页(modelsDefaultPriceView) —— 未单独配价的模型按它计费。
  * accts / dm 由 PAGES.models 一次性取好传进来, 切标签页不再发请求。
  */
 function modelsPricingView(accts, dm) {
   const dp = dm.default_price || {};
-  const bi = dm.default_price_builtin || {};
-  const priced = new Map((dm.models || []).map((m) => [m.model, m]));
+  const priced = new Map((dm.models || []).map((m) => [m.account_id + '|' + m.model, m]));
   const opts = accts.length
     ? accts.map((a) =>
         '<option value="' + a.id + '">' + esc(a.name) + ' · ' + esc(a.platform) + '</option>').join('')
     : '<option value="">(没有可用的上游账号)</option>';
 
+  // 平台列: 账号级定价显示"账号名 · 平台", 全局定价显示「全局」
+  const platformCell = (m) => {
+    if (Number(m.account_id) > 0) {
+      const acct = accts.find((a) => a.id === Number(m.account_id));
+      if (acct) {
+        return '<span class="mono">' + esc(acct.name || ('#' + m.account_id)) +
+          '</span> <span class="tag off">' + esc(acct.platform || '?') + '</span>';
+      }
+      return '<span class="tag warn">#' + m.account_id + ' (账号已删除)</span>';
+    }
+    return '<span class="tag">全局</span>';
+  };
+
   const listRows = priced.size
     ? (dm.models || []).map((m) =>
         '<tr>' +
           '<td class="mono">' + esc(m.model) + '</td>' +
+          '<td>' + platformCell(m) + '</td>' +
           '<td>$' + m.input_per_mtok + '</td>' +
           '<td>$' + m.output_per_mtok + '</td>' +
-          '<td><button class="btn sm" data-edit-model="' + esc(m.model) + '">编辑</button> ' +
-              '<button class="btn sm danger" data-del-model="' + esc(m.model) + '">删除</button></td>' +
+          '<td><button class="btn sm" data-edit-model="' + esc(m.account_id) + '|' + esc(m.model) + '">编辑</button> ' +
+              '<button class="btn sm danger" data-del-model="' + esc(m.account_id) + '|' + esc(m.model) + '">删除</button></td>' +
         '</tr>').join('')
-    : '<tr><td colspan="4" class="empty">还没有单独定价的模型 —— 未配价的一律走上面的「默认单价」。</td></tr>';
+    : '<tr><td colspan="5" class="empty">还没有单独定价的模型 —— 未配价的一律走上面的「默认单价」。</td></tr>';
 
   $('#models-body').innerHTML =
-    // ---- ① 默认单价 ----
-    '<div class="panel">' +
-      '<div class="panel-title">默认单价 <span class="tag warn">未配价模型走这里</span></div>' +
-      '<div class="panel-body">' +
-        '<p class="hint">' +
-          '下面的<b>模型定价表</b>里没有单独配价的模型, 一律按这里的单价计费 —— ' +
-          '这是<b>唯一</b>的兜底口径(以前那套写死在代码里的内置价目表已不再参与计费)。' +
-          '改完立即生效, 不影响已单独定价的模型。' +
-        '</p>' +
-        '<div class="grid2">' +
-          '<div class="form-row"><label>输入价 (USD / 百万 token)</label>' +
-            '<input id="pd-in" type="number" step="0.01" min="0" value="' + Number(dp.input_price || 0) + '"></div>' +
-          '<div class="form-row"><label>输出价 (USD / 百万 token)</label>' +
-            '<input id="pd-out" type="number" step="0.01" min="0" value="' + Number(dp.output_price || 0) + '"></div>' +
-          '<div class="form-row"><label>缓存读价 (USD / 百万 token)</label>' +
-            '<input id="pd-cr" type="number" step="0.01" min="0" value="' + Number(dp.cache_read_price || 0) + '"></div>' +
-          '<div class="form-row"><label>缓存写价 (USD / 百万 token)</label>' +
-            '<input id="pd-cw" type="number" step="0.01" min="0" value="' + Number(dp.cache_creation_price || 0) + '"></div>' +
-        '</div>' +
-        '<div class="panel-actions">' +
-          '<button class="btn primary" id="pd-save">保存默认单价</button>' +
-          '<button class="btn" id="pd-reset">还原出厂默认 (' +
-            Number(bi.input_price || 0) + ' / ' + Number(bi.output_price || 0) + ')</button>' +
-        '</div>' +
-      '</div>' +
-    '</div>' +
-    // ---- ② 从上游拉模型 + 一键定价 ----
+    // ---- ① 从上游拉模型 + 一键定价 ----
     '<div class="panel">' +
       '<div class="panel-title">从上游获取模型 · 一键设置定价</div>' +
       '<div class="panel-body">' +
@@ -3778,48 +4498,19 @@ function modelsPricingView(accts, dm) {
         '<button class="btn sm primary" id="p-new" style="margin-left:auto">手动新增定价</button>' +
       '</div>' +
       '<div class="table-wrap"><table>' +
-        '<thead><tr><th>模型</th><th>输入价</th><th>输出价</th><th>操作</th></tr></thead>' +
+        '<thead><tr><th>模型</th><th>上游平台</th><th>输入价</th><th>输出价</th><th>操作</th></tr></thead>' +
         '<tbody>' + listRows + '</tbody>' +
       '</table></div>' +
     '</div>';
 
   const defVal = (k) => Number(dp[k] || 0);
 
-  // ===== ① 默认单价 =====
-  $('#pd-save').addEventListener('click', async (e) => {
-    const btn = e.currentTarget;
-    btn.disabled = true; btn.textContent = '保存中…';
-    try {
-      await api('/models', {
-        method: 'PUT',
-        body: JSON.stringify({
-          default_price: {
-            input_price: Number($('#pd-in').value || 0),
-            output_price: Number($('#pd-out').value || 0),
-            cache_read_price: Number($('#pd-cr').value || 0),
-            cache_creation_price: Number($('#pd-cw').value || 0),
-          },
-        }),
-      });
-      toast('默认单价已保存');
-      MODELS_TAB = 'price'; PAGES.models();
-    } catch (err) {
-      toast(err.message, 'err');
-      btn.disabled = false; btn.textContent = '保存默认单价';
-    }
-  });
-
-  $('#pd-reset').addEventListener('click', () => {
-    $('#pd-in').value = Number(bi.input_price || 0);
-    $('#pd-out').value = Number(bi.output_price || 0);
-    $('#pd-cr').value = Number(bi.cache_read_price || 0);
-    $('#pd-cw').value = Number(bi.cache_creation_price || 0);
-    toast('已填入出厂默认值, 记得点「保存默认单价」');
-  });
-
-  // ===== ② 从上游拉模型 =====
+  // ===== 从上游拉模型 =====
   // 每行的缓存读写价藏在 data-cr / data-cw 上(不占表格列宽), 回写时原样带回,
   // 避免"批量套用默认价"把某模型已单独配过的缓存价冲掉。
+  // 🚨 这些模型是「当前所选账号」拉下来的 → 保存时每条都带 account_id,
+  //    写成该账号的**专属价**, 而不是全局价(否则删账号时不会级联清掉它)。
+  let curAcctId = 0;   // 拉取时记录所选账号, collectRows 用它给行打标(存成账号专属价)
   const collectRows = () => {
     const out = [];
     document.querySelectorAll('.m-in').forEach((el) => {
@@ -3828,6 +4519,7 @@ function modelsPricingView(accts, dm) {
       const outEl = document.querySelector('.m-out[data-mid="' + CSS.escape(model) + '"]');
       out.push({
         model,
+        account_id: curAcctId || 0,
         input_price: Number(el.value || 0),
         output_price: Number(outEl ? outEl.value : 0),
         cache_read_price: Number(el.dataset.cr || 0),
@@ -3857,6 +4549,7 @@ function modelsPricingView(accts, dm) {
     $('#m-apply').style.display = 'none';
     $('#m-fill').style.display = 'none';
     if (!acct) { toast('请先选择一个上游账号', 'err'); return; }
+    curAcctId = id;   // 拉取的是该账号的模型 → 一键定价/逐行保存都写给这个账号
     btn.disabled = true; btn.textContent = '获取中…';
     $('#m-body').innerHTML = '<div class="empty">请求上游中…</div>';
     try {
@@ -3883,7 +4576,8 @@ function modelsPricingView(accts, dm) {
       }
 
       const rows = r.models.map((mid) => {
-        const cur = priced.get(mid);
+        // 该账号下已配价的用现价; 否则不同账号的专属价、全局价都不算「当前账号已定价」
+        const cur = priced.get(id + '|' + mid) || priced.get('0|' + mid);
         const inP = cur ? Number(cur.input_per_mtok) : defVal('input_price');
         const outP = cur ? Number(cur.output_per_mtok) : defVal('output_price');
         const cr = cur ? Number(cur.cache_read_price || 0) : defVal('cache_read_price');
@@ -3934,23 +4628,36 @@ function modelsPricingView(accts, dm) {
   });
 
   // ===== ③ 手动新增 / 编辑 / 删除 =====
-  $('#p-new').addEventListener('click', () => modelForm(null));
+  $('#p-new').addEventListener('click', () => modelForm(null, accts));
   document.querySelectorAll('[data-edit-model]').forEach((el) => {
     el.addEventListener('click', () => {
-      const m = (dm.models || []).find((x) => x.model === el.dataset.editModel);
-      modelForm(m);
+      // 复合键 accountId|model
+      const [acid, ...rest] = String(el.dataset.editModel).split('|');
+      const model = rest.join('|');
+      const m = (dm.models || []).find(
+        (x) => x.model === model && Number(x.account_id) === Number(acid || 0));
+      modelForm(m, accts);
     });
   });
   document.querySelectorAll('[data-del-model]').forEach((el) => {
     el.addEventListener('click', () => {
-      const model = el.dataset.delModel;
+      const [acid, ...rest] = String(el.dataset.delModel).split('|');
+      const model = rest.join('|');
+      const account_id = Number(acid || 0);
+      const who = account_id > 0
+        ? '账号 <code>' + esc(acid) + '</code> 的模型 <code>' + esc(model) + '</code>'
+        : '全局模型 <code>' + esc(model) + '</code>';
       openModal('确认删除定价',
-        '<p>确定删除模型 <code>' + esc(model) + '</code> 的定价吗?删除后它会回落到<b>默认单价</b>计费。</p>',
+        '<p>确定删除' + who + '的定价吗?删除后该模型会回落到<b>默认单价</b>计费' +
+        (account_id > 0 ? '; 若该账号还有全局价, 则回落到全局价。' : '。') + '</p>',
         '<button class="btn" id="m-cancel">取消</button><button class="btn danger" id="m-del">确认删除</button>');
       $('#m-cancel').addEventListener('click', closeModal);
       $('#m-del').addEventListener('click', async () => {
         try {
-          await api('/models', { method: 'DELETE', body: JSON.stringify({ model }) });
+          await api('/models', {
+            method: 'DELETE',
+            body: JSON.stringify(account_id > 0 ? { model, account_id } : { model }),
+          });
           closeModal(); toast('已删除');
           MODELS_TAB = 'price'; PAGES.models();
         } catch (err) { toast(err.message, 'err'); }
@@ -3959,9 +4666,91 @@ function modelsPricingView(accts, dm) {
   });
 }
 
-function modelForm(m) {
+/**
+ * 「默认单价」标签页 —— 单独一副表单, 只改兜底单价。
+ * 定价表(models)里没有单独配价的模型, 一律按这里的单价计费。
+ * 这是唯一的兜底口径(内置价目表已删除, 不再参与计费)。
+ */
+function modelsDefaultPriceView(accts, dm) {
+  const dp = dm.default_price || {};
+  const bi = dm.default_price_builtin || {};
+
+  $('#models-body').innerHTML =
+    '<div class="panel">' +
+      '<div class="panel-title">默认单价 <span class="tag warn">未配价模型走这里</span></div>' +
+      '<div class="panel-body">' +
+        '<p class="hint">' +
+          '下面的<b>模型定价</b>里没有单独配价的模型, 一律按这里的单价计费 —— ' +
+          '这是<b>唯一</b>的兜底口径(以前那套写死在代码里的内置价目表已不再参与计费)。' +
+          '改完立即生效, 不影响已单独定价的模型。' +
+        '</p>' +
+        '<div class="grid2">' +
+          '<div class="form-row"><label>输入价 (USD / 百万 token)</label>' +
+            '<input id="pd-in" type="number" step="0.01" min="0" value="' + Number(dp.input_price || 0) + '"></div>' +
+          '<div class="form-row"><label>输出价 (USD / 百万 token)</label>' +
+            '<input id="pd-out" type="number" step="0.01" min="0" value="' + Number(dp.output_price || 0) + '"></div>' +
+          '<div class="form-row"><label>缓存读价 (USD / 百万 token)</label>' +
+            '<input id="pd-cr" type="number" step="0.01" min="0" value="' + Number(dp.cache_read_price || 0) + '"></div>' +
+          '<div class="form-row"><label>缓存写价 (USD / 百万 token)</label>' +
+            '<input id="pd-cw" type="number" step="0.01" min="0" value="' + Number(dp.cache_creation_price || 0) + '"></div>' +
+        '</div>' +
+        '<div class="panel-actions">' +
+          '<button class="btn primary" id="pd-save">保存默认单价</button>' +
+          '<button class="btn" id="pd-reset">还原出厂默认 (' +
+            Number(bi.input_price || 0) + ' / ' + Number(bi.output_price || 0) + ')</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+
+  $('#pd-save').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true; btn.textContent = '保存中…';
+    try {
+      await api('/models', {
+        method: 'PUT',
+        body: JSON.stringify({
+          default_price: {
+            input_price: Number($('#pd-in').value || 0),
+            output_price: Number($('#pd-out').value || 0),
+            cache_read_price: Number($('#pd-cr').value || 0),
+            cache_creation_price: Number($('#pd-cw').value || 0),
+          },
+        }),
+      });
+      toast('默认单价已保存');
+      MODELS_TAB = 'default'; PAGES.models();
+    } catch (err) {
+      toast(err.message, 'err');
+      btn.disabled = false; btn.textContent = '保存默认单价';
+    }
+  });
+
+  $('#pd-reset').addEventListener('click', () => {
+    $('#pd-in').value = Number(bi.input_price || 0);
+    $('#pd-out').value = Number(bi.output_price || 0);
+    $('#pd-cr').value = Number(bi.cache_read_price || 0);
+    $('#pd-cw').value = Number(bi.cache_creation_price || 0);
+    toast('已填入出厂默认值, 记得点「保存默认单价」');
+  });
+}
+
+function modelForm(m, accts) {
   const isEdit = !!m;
+  accts = accts || [];
+  const isGlobal = !isEdit || Number(m.account_id) === 0;
+  // 账号下拉: 新增时可选「全局」或某账号; 编辑账号级定价时锁定该账号只读展示
+  const acctSel = isEdit && !isGlobal
+    ? '<div class="form-row"><label>上游账号</label>' +
+        '<input type="text" class="mono" value="' + esc((accts.find((a) => a.id === Number(m.account_id)) || {}).name || ('#' + m.account_id)) + '" readonly></div>'
+    : '<div class="form-row"><label>上游平台</label>' +
+        '<select id="p-acct">' +
+          '<option value="0">全局（所有账号共用）</option>' +
+          accts.map((a) => '<option value="' + a.id + '"' +
+            (isEdit && Number(m.account_id) === a.id ? ' selected' : '') + '>' +
+            esc(a.name) + ' · ' + esc(a.platform) + '</option>').join('') +
+        '</select></div>';
   openModal(isEdit ? '编辑模型定价' : '新增模型定价',
+    acctSel +
     '<div class="form-row"><label>模型名</label><input id="p-model" class="mono" value="' + esc(isEdit ? m.model : '') + '"' +
       (isEdit ? ' readonly' : '') + ' placeholder="gpt-4o"></div>' +
     '<div class="grid2">' +
@@ -3970,22 +4759,25 @@ function modelForm(m) {
       '<div class="form-row"><label>缓存读价 (USD/百万 token)</label><input id="p-cr" type="number" step="0.01" min="0" value="' + (isEdit ? Number(m.cache_read_price || 0) : 0) + '"></div>' +
       '<div class="form-row"><label>缓存写价 (USD/百万 token)</label><input id="p-cw" type="number" step="0.01" min="0" value="' + (isEdit ? Number(m.cache_creation_price || 0) : 0) + '"></div>' +
     '</div>' +
-    '<p class="hint muted">换算关系: 数据库按"微美元/token"存储, 这里输入的是最常见的"美元/百万 token", 两者数值相同。留空的模型按「默认单价」计费。</p>',
+    '<p class="hint muted">换算关系: 数据库按"微美元/token"存储, 这里输入的是最常见的"美元/百万 token", 两者数值相同。' +
+    '选「全局」= 所有账号共用此价; 选某个账号 = 仅该账号按此价计费, 未选账号仍走全局价或默认单价。留空的模型按「默认单价」计费。</p>',
     '<button class="btn" id="m-cancel">取消</button><button class="btn primary" id="m-save">保存</button>');
 
   $('#m-cancel').addEventListener('click', closeModal);
   $('#m-save').addEventListener('click', async () => {
     try {
-      await api('/models', {
-        method: 'PUT',
-        body: JSON.stringify({
-          model: $('#p-model').value.trim(),
-          input_price: Number($('#p-in').value || 0),
-          output_price: Number($('#p-out').value || 0),
-          cache_read_price: Number($('#p-cr').value || 0),
-          cache_creation_price: Number($('#p-cw').value || 0),
-        }),
-      });
+      const body = {
+        model: $('#p-model').value.trim(),
+        input_price: Number($('#p-in').value || 0),
+        output_price: Number($('#p-out').value || 0),
+        cache_read_price: Number($('#p-cr').value || 0),
+        cache_creation_price: Number($('#p-cw').value || 0),
+      };
+      // 编辑账号级定价时保持原账号; 新增/编辑全局时按下拉选
+      const sel = $('#p-acct');
+      if (sel) body.account_id = Number(sel.value || 0);
+      else if (isEdit && !isGlobal) body.account_id = Number(m.account_id);
+      await api('/models', { method: 'PUT', body: JSON.stringify(body) });
       closeModal(); toast('保存成功');
       MODELS_TAB = 'price'; PAGES.models();
     } catch (e) { toast(e.message, 'err'); }

@@ -89,9 +89,10 @@ export const DEFAULT_PRICE_SETTING = 'model_pricing_default';
 /**
  * 解析模型单价。
  *
- * 优先级（**只有这两级**）：
- *   1. `model_pricing` 表 —— 控制台「模型定价」页逐模型配的价
- *   2. `defaultPrice` —— 定价页上的「默认单价」
+ * 优先级（**只有这三档**，accountId 传 0/空 时等效旧全局逻辑）：
+ *   1. `model_pricing` 表 —— 控制台「模型定价」页配的价。
+ *      先查 (accountId, model) 的**账号专属价**, 查不到回退 (0, model) 全局价。
+ *   2. `defaultPrice` —— 定价页上的「默认单价」。
  *
  * 🚨 分组对价格的影响**不再是一张独立的价目表**（`groups.model_pricing` 已停用），
  * 而是乘在最终金额上的**倍率**：`combineRateMultiplier(groupRate, accountRate)`。
@@ -99,6 +100,7 @@ export const DEFAULT_PRICE_SETTING = 'model_pricing_default';
  */
 export function resolveModelPrice(
   model: string,
+  accountId: number,
   dbPricing: Map<string, ModelPrice>,
   defaultPrice: ModelPrice,
 ): ModelPrice {
@@ -108,7 +110,7 @@ export function resolveModelPrice(
   if (stripped !== model) candidates.push(stripped);
 
   for (const m of candidates) {
-    const db = dbPricing.get(m);
+    const db = dbPricing.get(`${accountId}:${m}`) ?? dbPricing.get(`0:${m}`);
     if (db) return db;
   }
   return defaultPrice;
