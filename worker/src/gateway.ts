@@ -273,6 +273,62 @@ function lookupModelRoute(
 }
 
 /**
+ * 从分组「模型关联」白名单的 `平台::模型` 复合条目里, 找出这个模型**属于哪个平台**。
+ *
+ * 后台「模型关联」保存格式: `openai::gpt-4o` / `arityflow::glm-5.2` —— 平台名,
+ * 然后两个冒号, 然后原样模型名。平台与模型都**区分大小写**(用户配的是哪个平台,
+ * 关联的就是哪个平台的 API; 不同平台同名模型互不干扰)。
+ *
+ * 匹配顺序:
+ *   1. 精确: `platform::Model` 大小写完全一致 —— 最高优先级, 满足"区分大小写"
+ *   2. 大小写不敏感: 兼容客户端把模型名规范化/大小写变体(与 lookupModelRoute 同策略)
+ *
+ * **同名模型在多个平台都有关联时不锁定**(返回 null): 平台撞名无法消歧,
+ * 交给后续链路 —— 如果用户真的要让 `glm-5.2` 走 arityflow, 应该在「别名设置」
+ * 里给 arityflow 声明该模型, 或在分组上显式配 platform / 模型路由。
+ *
+ * 只参与**平台锁定**, 不放行判断(白名单 403 校验已停用, GROUP_ALLOWLIST_ENABLED=false)。
+ */
+function groupLockedPlatform(ctx: AuthContext, model: string): Platform | null {
+  const allow = ctx.groupModelAllowlist;
+  if (!allow || allow.length === 0 || !model) return null;
+
+  const want = model.toLowerCase();
+
+  // 第一轮: 精确匹配(区分大小写)。同一个模型名在多个平台都有关联时歧义, 不锁定。
+  let exact: string | null = null;
+  for (const entry of allow) {
+    const s = String(entry || '');
+    const i = s.indexOf('::');
+    if (i <= 0) continue;            // 旧格式纯模型名 —— 不参与路由, 只影响列表展示
+    const plat = s.slice(0, i);
+    const name = s.slice(i + 2);
+    if (!plat || !name) continue;
+    if (name === model) {
+      if (exact && exact !== plat) return null;   // openai::glm-5.2 + deepseek::glm-5.2
+      exact = plat;
+    }
+  }
+  if (exact) return exact as Platform;
+
+  // 第二轮: 大小写不敏感(客户端大小写不受控, 与 lookupModelRoute 同策略)
+  let loose: string | null = null;
+  for (const entry of allow) {
+    const s = String(entry || '');
+    const i = s.indexOf('::');
+    if (i <= 0) continue;
+    const plat = s.slice(0, i);
+    const name = s.slice(i + 2);
+    if (!plat || !name) continue;
+    if (name.toLowerCase() === want) {
+      if (loose && loose !== plat) return null;
+      loose = plat;
+    }
+  }
+  return loose ? (loose as Platform) : null;
+}
+
+/**
  * 推断入站请求要发往哪个平台
  * 上游由分组 platform 决定(compositeTarget 中间件), 这里优先用分组配置,
  * 分组未指定时按入站路径特征推断
@@ -312,6 +368,24 @@ export function inferPlatform(
     // 用户有白名单时不能越界 —— 越界就退回白名单首个平台
     if (access.length > 0 && !access.includes(target)) return access[0] as Platform;
     return target;
+  }
+
+  // ---- 分组关联模型 → 钉死平台 (2026-09-24) ----
+  //
+  // 后台「模型关联」按平台保存, 白名单条目形如 `arityflow::glm-5.2` —— 它声明了
+  // **这个模型属于 arityflow 平台**。客户端发这个模型时, 就必须走声明它的那个平台,
+  // 而不是让自动发现把同名模型送去先声明到的平台(撞名时 sensenova 的 glm-5.2
+  // 会把 arityflow 的 glm-5.2 顶掉, 表现为"关联了 A 平台却走到 B 平台的 API")。
+  //
+  // 匹配规则: 精确(区分大小写)优先, 查不到再大小写不敏感 —— 与 lookupModelRoute
+  // 同一策略, 客户端大小写不受控, 但保存语义仍按大小写区分。
+  // 同名模型在多个平台都有关联(如 openai::glm-5.2 + deepseek::glm-5.2)时无法
+  // 区分, 不锁定, 交给后续链路(通常走 groupPlatform / 自动发现兜底)。
+  const locked = groupLockedPlatform(ctx, model);
+  if (locked) {
+    // 用户有白名单时不能越界 —— 越界就退回白名单首个平台
+    if (access.length > 0 && !access.includes(locked)) return access[0] as Platform;
+    return locked;
   }
 
   const gp = (ctx.groupPlatform ?? '').trim();
@@ -676,6 +750,7 @@ export async function handleGateway(
 
     const explicitlyRouted =
       !!resolveModelPlatformRoute(ctx, requestedModel) ||
+      !!groupLockedPlatform(ctx, requestedModel) ||
       !!((ctx.groupPlatform ?? '').trim()) ||
       (ctx.userPlatformAccess ?? '').split(',').map((s) => s.trim()).filter(Boolean).length === 1;
 
