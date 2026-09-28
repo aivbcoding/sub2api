@@ -4459,6 +4459,7 @@ function modelsPricingView(accts, dm) {
   const listRows = priced.size
     ? (dm.models || []).map((m) =>
         '<tr>' +
+          '<td class="col-sel"><input type="checkbox" class="p-row" data-key="' + esc(m.account_id) + '|' + esc(m.model) + '"></td>' +
           '<td class="mono">' + esc(m.model) + '</td>' +
           '<td>' + platformCell(m) + '</td>' +
           '<td>$' + m.input_per_mtok + '</td>' +
@@ -4466,7 +4467,7 @@ function modelsPricingView(accts, dm) {
           '<td><button class="btn sm" data-edit-model="' + esc(m.account_id) + '|' + esc(m.model) + '">编辑</button> ' +
               '<button class="btn sm danger" data-del-model="' + esc(m.account_id) + '|' + esc(m.model) + '">删除</button></td>' +
         '</tr>').join('')
-    : '<tr><td colspan="5" class="empty">还没有单独定价的模型 —— 未配价的一律走上面的「默认单价」。</td></tr>';
+    : '<tr><td colspan="6" class="empty">还没有单独定价的模型 —— 未配价的一律走上面的「默认单价」。</td></tr>';
 
   $('#models-body').innerHTML =
     // ---- ① 从上游拉模型 + 一键定价 ----
@@ -4491,13 +4492,14 @@ function modelsPricingView(accts, dm) {
       '</div>' +
       '<div id="m-body" class="result-body"></div>' +
     '</div>' +
-    // ---- ③ 已定价模型(手动新增/编辑/删除) ----
+    // ---- ③ 已定价模型(手动新增/编辑/删除/批量删除) ----
     '<div class="panel">' +
       '<div class="panel-title">已单独定价的模型 (共 ' + priced.size + ' 个)' +
-        '<button class="btn sm primary" id="p-new" style="margin-left:auto">手动新增定价</button>' +
+        '<button class="btn sm danger" id="p-batch-del" style="margin-left:auto" disabled>删除选中</button>' +
+        '<button class="btn sm primary" id="p-new" style="margin-left:8px">手动新增定价</button>' +
       '</div>' +
       '<div class="table-wrap"><table>' +
-        '<thead><tr><th>模型</th><th>上游平台</th><th>输入价</th><th>输出价</th><th>操作</th></tr></thead>' +
+        '<thead><tr><th class="col-sel"><input type="checkbox" id="p-all"></th><th>模型</th><th>上游平台</th><th>输入价</th><th>输出价</th><th>操作</th></tr></thead>' +
         '<tbody>' + listRows + '</tbody>' +
       '</table></div>' +
     '</div>';
@@ -4661,6 +4663,60 @@ function modelsPricingView(accts, dm) {
           MODELS_TAB = 'price'; PAGES.models();
         } catch (err) { toast(err.message, 'err'); }
       });
+    });
+  });
+
+  // ===== ④ 批量删除已定价模型 =====
+  // 复合键 accountId|model 与单条删除一致; 后端 DELETE /models 本来就收批量 { models: [...] },
+  // 这里只补 UI: 全选框 + 行复选框 + 「删除选中」(带确认弹窗, 删除动作会记入操作审计)。
+  const pRows = () => Array.prototype.slice.call(document.querySelectorAll('.p-row'));
+  const pSync = () => {
+    const els = pRows();
+    const sel = els.filter((el) => el.checked);
+    const box = $('#p-all');
+    const btn = $('#p-batch-del');
+    if (box) {
+      box.checked = els.length > 0 && sel.length === els.length;
+      box.indeterminate = sel.length > 0 && sel.length < els.length;
+    }
+    if (btn) {
+      btn.disabled = sel.length === 0;
+      btn.textContent = sel.length ? '删除选中 (' + sel.length + ')' : '删除选中';
+    }
+  };
+  const pAll = $('#p-all');
+  if (pAll) pAll.addEventListener('change', () => {
+    pRows().forEach((el) => { el.checked = pAll.checked; });
+    pSync();
+  });
+  pRows().forEach((el) => el.addEventListener('change', pSync));
+  $('#p-batch-del').addEventListener('click', () => {
+    const keys = pRows().filter((el) => el.checked).map((el) => String(el.dataset.key));
+    if (!keys.length) return;
+    const items = keys.map((k) => {
+      const [acid, ...rest] = k.split('|');
+      const model = rest.join('|');
+      const account_id = Number(acid || 0);
+      return account_id > 0 ? { model, account_id } : { model };
+    });
+    // 🚨 用户明确要求: 删除必须弹窗确认, 不能直接删
+    openModal('确认批量删除定价',
+      '<p>确定删除选中的 <b>' + items.length + '</b> 个模型的定价吗?</p>' +
+      '<p class="hint muted" style="margin:8px 0 0">删除后这些模型回落到<b>默认单价</b>计费, 不可恢复; 删除动作本身会记入操作审计。</p>',
+      '<button class="btn" id="m-cancel">取消</button><button class="btn danger" id="m-del">确认删除</button>');
+    $('#m-cancel').addEventListener('click', closeModal);
+    $('#m-del').addEventListener('click', async () => {
+      const b = $('#m-del');
+      b.disabled = true; b.textContent = '删除中…';
+      try {
+        const r = await api('/models', { method: 'DELETE', body: JSON.stringify({ models: items }) });
+        closeModal();
+        toast('已删除 ' + (r && r.deleted != null ? r.deleted : items.length) + ' 个模型的定价');
+        MODELS_TAB = 'price'; PAGES.models();
+      } catch (err) {
+        toast(err.message, 'err');
+        b.disabled = false; b.textContent = '确认删除';
+      }
     });
   });
 }

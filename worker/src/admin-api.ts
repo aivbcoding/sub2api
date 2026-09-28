@@ -2716,9 +2716,11 @@ async function resolveAccountEndpoint(
 
   switch (protocol) {
     case 'anthropic':
-      url = `${base.replace(/\/+$/, '')}/v1/messages`;
+      // 模型列表/连通性测试用 GET /v1/models —— anthropic 官方与中转都实现了该端点。
+      // 之前拼的是 /v1/messages 再用 GET 打: 官方回 405 还能判 "reachable",
+      // 但部分中转的 WAF 会直接 403 拦截页, 连带「获取模型」一起挂。
+      url = `${base.replace(/\/+$/, '')}/v1/models`;
       applyUpstreamAuth(headers, protocol, account.type, credential);
-      headers.set('content-type', 'application/json');
       break;
     case 'gemini':
       url = `${base.replace(/\/+$/, '')}/v1beta/models`;
