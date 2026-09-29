@@ -2832,6 +2832,18 @@ async function groupModelsForm(g) {
     '<button class="page-tab' + (key === curTab ? ' active' : '') + '" data-gmtab="' + key + '">' +
       esc(label) + '</button>';
 
+  // 某平台档的已选数: cur 的键都是 '平台::模型' 复合格式, 按前缀统计
+  const platSelCount = (p) => {
+    let n = 0;
+    for (const k of cur.keys()) { if (k.indexOf(p + '::') === 0) n++; }
+    return n;
+  };
+
+  // Tab 标签 = 平台名 (已选 x/总数); 勾选变化时整体重渲染即可联动
+  const tabsHtml = () =>
+    plats.map((p) => tabBtn(p + ' (已选 ' + platSelCount(p) + '/' + byPlatform[p].size + ')', p)).join('') +
+    (orphanSel.size ? tabBtn('其他 (' + orphanSel.size + ')', ORPHAN) : '');
+
   const itemRow = (saveValue, kind) => {
     // 候选行展示模型原名; 其他档展示条目原样
     const model = kind === 'cand'
@@ -2880,14 +2892,14 @@ async function groupModelsForm(g) {
       '<b>唯一 id = 平台::模型</b> —— 同名模型在不同平台互不影响, 且区分大小写。' +
       '保存后, 该分组用户的 <code>/v1/models</code> 只展示勾选的模型(按平台过滤)。' +
       '<b>全部不选 = 不过滤</b>(展示分组内全部模型)。' +
-      '当前已选: <b id="gm-count">' + (cur.size + orphanSel.size) + '</b>' +
+    '</div>' +
+    '<div style="margin-bottom:8px">' +
+      '<span style="display:inline-block;padding:4px 12px;border-radius:14px;font-weight:600;font-size:13px;' +
+        'background:#2563eb;color:#fff">已选 <span id="gm-count">' + (cur.size + orphanSel.size) + '</span> 个模型</span>' +
     '</div>' +
     (plats.length || orphanSel.size
-      ? '<div class="page-tabs" id="gm-tabs" style="margin-bottom:0">' +
-          plats.map((p) => tabBtn(p + ' (' + byPlatform[p].size + ')', p)).join('') +
-          (orphanSel.size ? tabBtn('其他 (' + orphanSel.size + ')', ORPHAN) : '') +
-        '</div>' +
-        '<div id="gm-panel" style="max-height:46vh;overflow-y:auto;border:1px solid var(--border);border-top:0;padding:4px 10px"></div>'
+      ? '<div class="page-tabs" id="gm-tabs" style="margin-bottom:0">' + tabsHtml() + '</div>' +
+        '<div id="gm-panel" style="max-height:46vh;overflow-y:auto;border:1px solid var(--border);border-top:0;padding:0 10px"></div>'
       : '');
 
   renderPanel();
@@ -2916,6 +2928,9 @@ async function groupModelsForm(g) {
     } else return;
     const c = $('#gm-count');
     if (c) c.textContent = String(cur.size + orphanSel.size);
+    // Tab 标签联动: 平台档显示「已选 x/总数」
+    const tabsEl = $('#gm-tabs');
+    if (tabsEl) tabsEl.innerHTML = tabsHtml();
     if (t.id !== 'gm-all') syncAllBox();
   });
 
