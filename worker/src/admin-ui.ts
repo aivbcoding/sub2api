@@ -2839,9 +2839,9 @@ async function groupModelsForm(g) {
     return n;
   };
 
-  // Tab 标签 = 平台名 (已选 x/总数); 勾选变化时整体重渲染即可联动
+  // Tab 标签 = 平台名 (模型总数)
   const tabsHtml = () =>
-    plats.map((p) => tabBtn(p + ' (已选 ' + platSelCount(p) + '/' + byPlatform[p].size + ')', p)).join('') +
+    plats.map((p) => tabBtn(p + ' (' + byPlatform[p].size + ')', p)).join('') +
     (orphanSel.size ? tabBtn('其他 (' + orphanSel.size + ')', ORPHAN) : '');
 
   const itemRow = (saveValue, kind) => {
@@ -2857,11 +2857,14 @@ async function groupModelsForm(g) {
     '</label>';
   };
 
-  const allRow = (n) =>
-    '<label style="display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid var(--border);font-weight:600;background:var(--bg);position:sticky;top:0">' +
+  const allRow = (n) => {
+    // 表头实时已选数: 当前档已勾选的条目数
+    const sel = curTab === ORPHAN ? orphanSel.size : platSelCount(curTab);
+    return '<label style="display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid var(--border);font-weight:600;background:var(--bg);position:sticky;top:0">' +
       '<input type="checkbox" id="gm-all" style="width:auto">' +
-      '全选 / 取消全选(本档共 ' + n + ' 个)' +
+      '全选 / 取消全选(本档已选 <b id="gm-tab-count" style="color:#2563eb">' + sel + '</b> / 共 ' + n + ' 个)' +
     '</label>';
+  };
 
   const renderPanel = () => {
     const panel = $('#gm-panel');
@@ -2928,9 +2931,9 @@ async function groupModelsForm(g) {
     } else return;
     const c = $('#gm-count');
     if (c) c.textContent = String(cur.size + orphanSel.size);
-    // Tab 标签联动: 平台档显示「已选 x/总数」
-    const tabsEl = $('#gm-tabs');
-    if (tabsEl) tabsEl.innerHTML = tabsHtml();
+    // 表头联动: 本档已选数
+    const tc = $('#gm-tab-count');
+    if (tc) tc.textContent = String(curTab === ORPHAN ? orphanSel.size : platSelCount(curTab));
     if (t.id !== 'gm-all') syncAllBox();
   });
 
