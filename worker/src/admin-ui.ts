@@ -2896,14 +2896,19 @@ async function groupModelsForm(g) {
       '保存后, 该分组用户的 <code>/v1/models</code> 只展示勾选的模型(按平台过滤)。' +
       '<b>全部不选 = 不过滤</b>(展示分组内全部模型)。' +
     '</div>' +
-    '<div style="margin-bottom:8px">' +
-      '<span style="display:inline-block;padding:4px 12px;border-radius:14px;font-weight:600;font-size:13px;' +
-        'background:#2563eb;color:#fff">已选 <span id="gm-count">' + (cur.size + orphanSel.size) + '</span> 个模型</span>' +
-    '</div>' +
     (plats.length || orphanSel.size
       ? '<div class="page-tabs" id="gm-tabs" style="margin-bottom:0">' + tabsHtml() + '</div>' +
         '<div id="gm-panel" style="max-height:46vh;overflow-y:auto;border:1px solid var(--border);border-top:0;padding:0 10px"></div>'
       : '');
+
+  // 总的已选数徽标: 放到底部按钮区, 紧贴「取消」按钮左侧
+  const footEl = document.querySelector('.modal-foot');
+  if (footEl) {
+    footEl.insertAdjacentHTML('afterbegin',
+      '<span style="margin-right:auto;display:inline-block;padding:4px 12px;border-radius:14px;' +
+        'font-weight:600;font-size:13px;background:#2563eb;color:#fff">已选 <span id="gm-count">' +
+        (cur.size + orphanSel.size) + '</span> 个模型</span>');
+  }
 
   renderPanel();
 
