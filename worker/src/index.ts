@@ -80,6 +80,16 @@ const CONSOLE_PAGES = new Set([
   'settings',
 ]);
 
+/**
+ * cc-switch 余额模版的兼容路径: `[/<seg>][/v1]/user/balance`。
+ *
+ * cc-switch 的通用余额模版是 `GET {{baseUrl}}/user/balance`, 而 {{baseUrl}}
+ * 可能被用户配成裸域名、带 `/v1`、或带入口路径 `/<entry>` 前缀。这里统一
+ * 剥掉可选前缀 —— 余额属于 API Key 的属主, 与命中哪条入口路径无关,
+ * 所以 seg 不查库、任意段都放行(反正鉴权只认 Key)。
+ */
+const USER_BALANCE_PATH_RE = /^\/(?:[^/]+\/)?(?:v1\/)?user\/balance$/;
+
 export default {
   async fetch(request: Request, env: never, executionCtx: ExecutionContext): Promise<Response> {
     // 把 executionCtx 挂到 env 上, 供 gateway 内后台结算使用
@@ -113,6 +123,7 @@ export default {
             'POST /v1/messages',
             'POST /v1/embeddings',
             'GET  /v1/models',
+            'GET  /user/balance',
             'POST /v1beta/models/{model}:generateContent',
           ],
           console: '/dashboard',
@@ -164,6 +175,14 @@ export default {
     // ---- 后台 API ----
     if (pathname === '/api/admin' || pathname.startsWith('/api/admin/')) {
       return handleAdminRequest(request, env, pathname);
+    }
+
+    // ---- 余额查询 (cc-switch 通用余额模版) ----
+    // 模版: GET {{baseUrl}}/user/balance + `Authorization: Bearer {{apiKey}}`。
+    // 统一改写成 /user/balance 后走网关的 API Key 鉴权链路(handleApiRequest)。
+    if (USER_BALANCE_PATH_RE.test(pathname)) {
+      url.pathname = '/user/balance';
+      return handleApiRequest(request, env, executionCtx, url, null);
     }
 
     // ---- 入口路径: /<entry>/v1/... ----
@@ -454,6 +473,37 @@ async function handleApiRequest(
   if (ctx.keyStatus === 'quota_exhausted') {
     return withCors(
       errorResponse(429, 'rate_limit_error', 'API key quota exhausted.', 'quota_exhausted'),
+      cors,
+    );
+  }
+
+  // ---- /user/balance : 余额查询 (cc-switch 通用余额模版) ----
+  // 模版 extractor 读 response.is_active / response.balance(USD)。
+  // 刻意放在额度窗口校验 / 余额拦截**之前**: 余额为 0 时 cc-switch 应该显示
+  // $0.00, 而不是被 429/403 拦下让余额显示变成"获取失败"。
+  if (url.pathname === '/user/balance') {
+    if (request.method !== 'GET' && request.method !== 'HEAD') {
+      return withCors(
+        errorResponse(405, 'invalid_request_error', 'Method not allowed. Use GET /user/balance.'),
+        cors,
+      );
+    }
+    // is_active = "这把 Key 现在还能不能正常发起对话"(过期/停用/额度耗尽
+    // 在前面已被拦下, 这里只剩余额一项)。admin 不受余额拦截, 恒为 true。
+    const enforceBal = String(env['ENFORCE_BALANCE'] ?? 'true') === 'true';
+    return withCors(
+      jsonResponse(
+        {
+          is_active: !enforceBal || ctx.userRole === 'admin' || ctx.userBalance > 0,
+          balance: ctx.userBalance / 1e8,
+          unit: 'USD',
+          key_id: ctx.keyId,
+          user_id: ctx.userId,
+          quota: ctx.keyQuota / 1e8,
+          quota_used: ctx.keyQuotaUsed / 1e8,
+        },
+        200,
+      ),
       cors,
     );
   }

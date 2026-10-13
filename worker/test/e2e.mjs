@@ -94,6 +94,44 @@ async function main() {
     check('quota 为 50', j.quota === 50, JSON.stringify(j).slice(0, 200));
   }
 
+  // 6b. cc-switch 通用余额模版: GET /user/balance
+  //     模版: {{baseUrl}}/user/balance + Bearer {{apiKey}}, extractor 读 is_active/balance
+  console.log('\n[6b] cc-switch 余额模版 GET /user/balance');
+  {
+    // 无 Key -> 401
+    const rNoAuth = await fetch(`${BASE}/user/balance`);
+    check('无 Key 返回 401', rNoAuth.status === 401, `status=${rNoAuth.status}`);
+
+    // 裸域名 baseUrl
+    const r = await fetch(`${BASE}/user/balance`, {
+      headers: { authorization: `Bearer ${KEY}`, 'user-agent': 'cc-switch/1.0' },
+    });
+    const j = await r.json().catch(() => ({}));
+    check('返回 200', r.status === 200, `status=${r.status}`);
+    check('balance 为 100 (USD 口径, 与 /v1/sub2api/billing 一致)', j.balance === 100, JSON.stringify(j).slice(0, 200));
+    check('is_active 为 boolean', typeof j.is_active === 'boolean', JSON.stringify(j).slice(0, 200));
+    check('unit 为 USD', j.unit === 'USD', JSON.stringify(j).slice(0, 200));
+
+    // baseUrl 带 /v1 前缀
+    const rV1 = await fetch(`${BASE}/v1/user/balance`, {
+      headers: { authorization: `Bearer ${KEY}` },
+    });
+    check('/v1/user/balance 返回 200', rV1.status === 200, `status=${rV1.status}`);
+
+    // baseUrl 带入口路径段前缀(余额只认 Key, 段不查库)
+    const rEntry = await fetch(`${BASE}/whatever/user/balance`, {
+      headers: { authorization: `Bearer ${KEY}` },
+    });
+    check('/<seg>/user/balance 返回 200', rEntry.status === 200, `status=${rEntry.status}`);
+
+    // 非 GET -> 405 (不允许落进通用转发打到上游)
+    const rPost = await fetch(`${BASE}/user/balance`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${KEY}` },
+    });
+    check('POST 返回 405', rPost.status === 405, `status=${rPost.status}`);
+  }
+
   // 7. 有效 key + 真实上游 -> 验证请求确实抵达上游
   //    种子凭证是占位符, 所以期望上游以 401 拒绝 —— 这恰好证明转发链路是通的
   console.log('\n[7] 有效 Key + 转发到真实上游');
