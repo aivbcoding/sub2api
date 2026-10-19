@@ -45,6 +45,17 @@ import { renderAdminPage } from './admin-ui';
 
 export { AccountCoordinator } from './durable-object';
 
+/**
+ * 站点验证文件 (域名归属证明)。
+ *
+ * 验证平台要求在网站根目录放一个 `<hash>.txt`, 内容为它指定的 token ——
+ * 做成"文件名 -> 内容"映射表, 以后再加别的验证文件只改这里。
+ * 验证通过后对应条目可删, 不影响其它路径。
+ */
+const SITE_VERIFICATION_FILES: Record<string, string> = {
+  '395111ec89b082d5c2bbdc8f82b6d16e.txt': '89f786683b9d8c671f3731b040c768012b5b980b',
+};
+
 /** 带执行上下文的 Env */
 interface EnvWithCtx {
   __ctx?: ExecutionContext;
@@ -101,6 +112,15 @@ export default {
     // ---- CORS 预检 ----
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: corsHeaders(request, env) });
+    }
+
+    // ---- 站点验证文件 (域名归属证明, 一次性) ----
+    const verifBody = SITE_VERIFICATION_FILES[pathname.slice(1)];
+    if (verifBody !== undefined) {
+      return new Response(verifBody, {
+        status: 200,
+        headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' },
+      });
     }
 
     // ---- 健康检查 / 探针 ----

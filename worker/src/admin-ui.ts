@@ -1237,7 +1237,7 @@ function resetProgress() {
 
 const fmtMoney = (v) => '$' + Number(v || 0).toFixed(4);
 const fmtMoney2 = (v) => '$' + Number(v || 0).toFixed(2);
-// 整美元金额(签到奖励这种) —— 避免 $191.0000 这种尾巴;
+// 整美元金额(签到奖励这种) —— 避免 $81.0000 这种尾巴;
 // 小于 1 美元时退回两位小数, 免得显示成 $0。
 const fmtUsd = (v) => {
   const n = Number(v || 0);
@@ -1722,11 +1722,13 @@ async function doRegister() {
     if (!res.ok) throw new Error((data.error && data.error.message) || '注册失败');
 
     // 注册成功 -> 自动跳回登录页, 并把邮箱填进登录框(App 里"下一步必然是登录")
+    // 体验金金额来自后端响应的 bonus_usd(REGISTER_BONUS_USD), 后端改了这里跟着走
     const name = username || email;
+    const bonusTxt = data.bonus_usd ? ', 已赠送 $' + data.bonus_usd + ' 体验金' : '';
     loginBanner(
       data.auto_approved === false
-        ? '注册成功! 账号需要管理员审核后才能登录。'
-        : '注册成功! 请用刚设置的密码登录。',
+        ? '注册成功' + bonusTxt + '! 账号需要管理员审核后才能登录。'
+        : '注册成功' + bonusTxt + '! 请用刚设置的密码登录。',
       'ok',
     );
     showLogin();
@@ -2219,10 +2221,21 @@ function acctForm(a, d, g) {
   const protoOpts = protocols.map((p) =>
     '<option value="' + p + '"' + (curProtocol === p ? ' selected' : '') + '>' + p + '</option>').join('');
 
+  // 新建时默认勾上后端会兜底绑定的那个分组 —— POST /accounts 在 group_ids 为空时
+  // 会绑 ORDER BY id ASC LIMIT 1(通常是 default)。以前这里一个都不勾, 保存后
+  // 后端静默把账号落进默认分组, 界面上却什么都不显示, 所见非所得; 现在默认勾上,
+  // 用户仍可手动取消或改选。编辑模式沿用账号现有绑定, 不受影响。
+  let defGrpId = null;
+  if (!isEdit && g.groups.length) {
+    defGrpId = g.groups.reduce((m, gr) => (Number(gr.id) < Number(m.id) ? gr : m)).id;
+  }
   const groupChecks = g.groups.map((gr) =>
     '<label style="display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-weight:400">' +
     '<input type="checkbox" class="f-grp" value="' + gr.id + '" style="width:auto"' +
-    (isEdit && a.group_ids.includes(gr.id) ? ' checked' : '') + '> ' + esc(gr.name) + '</label>').join('');
+    ((isEdit && a.group_ids.includes(gr.id)) || (!isEdit && Number(gr.id) === Number(defGrpId)) ? ' checked' : '') + '> ' + esc(gr.name) + '</label>').join('') +
+    (g.groups.length
+      ? '<div class="hint" style="margin-top:6px">新账号默认进入 id 最小的分组(通常是 default), 可按需改选; 全部取消也允许, 保存后仍会兜底进默认分组。</div>'
+      : '');
 
   const defaultHint = d.protocol_base_url_hints || {};
 
@@ -2766,67 +2779,83 @@ async function groupModelsForm(g) {
   // platform -> Map(模型原名 -> 原名)。2026-09-24 起严格区分大小写、按平台
   // 独立: 同名模型在不同平台是不同条目, 唯一 id = 平台::模型(用户原话:
   // 「不要我选择了glm-5.5, 只要平台有的都选了, 应该用 平台+模型 作为唯一id」)。
-  const byPlatform = {};
-  for (const a of accts) {
+  // 2026-10-14 抽成函数: 弹窗内「从上游获取模型」补完空账号后要整体重建一次。
+  const buildByPlatform = () => {
+    const out = {};
+    for (const a of accts) {
+      let list = a.model_index;
+      if (typeof list === 'string') { try { list = JSON.parse(list); } catch (e) { list = []; } }
+      const map = out[a.platform] || (out[a.platform] = new Map());
+      for (const m of (Array.isArray(list) ? list : [])) {
+        const k = String(m || '').trim(); if (k) map.set(k, k);
+      }
+      const al = a.model_aliases;
+      if (al && typeof al === 'object') {
+        for (const k of Object.keys(al)) { const kk = String(k || '').trim(); if (kk) map.set(kk, kk); }
+      }
+    }
+    return out;
+  };
+  let byPlatform = buildByPlatform();
+
+  // 还没声明过任何模型的绑定账号(model_index 与别名键都空) ——
+  // 典型场景: 刚新增的上游账号还没跑过「模型获取」, 以前只能去
+  // 「模型管理」页获取, 现在弹窗内点按钮直接补(见 runDiscover)。
+  const missingAccts = () => accts.filter((a) => {
     let list = a.model_index;
     if (typeof list === 'string') { try { list = JSON.parse(list); } catch (e) { list = []; } }
-    const map = byPlatform[a.platform] || (byPlatform[a.platform] = new Map());
-    for (const m of (Array.isArray(list) ? list : [])) {
-      const k = String(m || '').trim(); if (k) map.set(k, k);
+    const hasIdx = Array.isArray(list) && list.length > 0;
+    let hasAlias = false;
+    if (a.model_aliases && typeof a.model_aliases === 'object') {
+      for (const k of Object.keys(a.model_aliases)) { if (String(k || '').trim()) { hasAlias = true; break; } }
     }
-    const al = a.model_aliases;
-    if (al && typeof al === 'object') {
-      for (const k of Object.keys(al)) { const kk = String(k || '').trim(); if (kk) map.set(kk, kk); }
-    }
-  }
+    return !hasIdx && !hasAlias;
+  });
 
   // 已选状态: cur = Map('平台::模型' -> 保存条目字符串); orphanSel = 候选里
   // 找不到、原样保留的旧条目(勾着才会保存)。旧格式纯模型名按大小写不敏感
   // 匹配全部平台候选(旧语义=对所有平台生效), 保存时升级为 平台::模型。
-  const cur = new Map();
-  const orphanSel = new Set();
-  const parseEntry = (e) => {
-    const s = String(e || '').trim();
-    const i = s.indexOf('::');
-    if (i > 0) return { platform: s.slice(0, i).trim(), model: s.slice(i + 2).trim() };
-    return null;
-  };
-  for (const e0 of (g.model_allowlist || [])) {
-    const s = String(e0 || '').trim(); if (!s) continue;
-    const p = parseEntry(s);
-    if (p) {
-      const m = byPlatform[p.platform];
-      if (m && m.has(p.model)) cur.set(p.platform + '::' + p.model, s);
-      else orphanSel.add(s);            // 上游已下架/平台改名 -> 其他档原样保留
-    } else {
-      let hit = false;
-      const lower = s.toLowerCase();
-      for (const plat of Object.keys(byPlatform)) {
-        for (const name of byPlatform[plat].keys()) {
-          if (String(name).toLowerCase() === lower) {
-            cur.set(plat + '::' + name, plat + '::' + name);
-            hit = true;
+  // 2026-10-14 抽成函数: 获取模型重建候选后, 要拿"当前勾选集"重新对一遍。
+  let cur = new Map();
+  let orphanSel = new Set();
+  const applySelection = (entries) => {
+    cur = new Map();
+    orphanSel = new Set();
+    const parseEntry = (e) => {
+      const s = String(e || '').trim();
+      const i = s.indexOf('::');
+      if (i > 0) return { platform: s.slice(0, i).trim(), model: s.slice(i + 2).trim() };
+      return null;
+    };
+    for (const e0 of (entries || [])) {
+      const s = String(e0 || '').trim(); if (!s) continue;
+      const p = parseEntry(s);
+      if (p) {
+        const m = byPlatform[p.platform];
+        if (m && m.has(p.model)) cur.set(p.platform + '::' + p.model, s);
+        else orphanSel.add(s);            // 上游已下架/平台改名 -> 其他档原样保留
+      } else {
+        let hit = false;
+        const lower = s.toLowerCase();
+        for (const plat of Object.keys(byPlatform)) {
+          for (const name of byPlatform[plat].keys()) {
+            if (String(name).toLowerCase() === lower) {
+              cur.set(plat + '::' + name, plat + '::' + name);
+              hit = true;
+            }
           }
         }
+        if (!hit) orphanSel.add(s);
       }
-      if (!hit) orphanSel.add(s);
     }
-  }
+  };
+  applySelection(g.model_allowlist || []);
 
   const bodyEl = document.querySelector('.modal-body');
   if (!bodyEl) return;
 
-  const plats = Object.keys(byPlatform).sort();
-
-  if (!plats.length && !orphanSel.size) {
-    bodyEl.innerHTML =
-      '<div class="empty">该分组还没有绑定任何有模型的上游账号。<br>' +
-      '先到「上游账号」绑定并跑一次「模型获取」, 再回来设置模型关联。</div>';
-    return;
-  }
-
   const ORPHAN = '__orphan';
-  let curTab = plats[0] || ORPHAN;
+  let curTab = Object.keys(byPlatform).sort()[0] || ORPHAN;
 
   const tabBtn = (label, key) =>
     '<button class="page-tab' + (key === curTab ? ' active' : '') + '" data-gmtab="' + key + '">' +
@@ -2841,7 +2870,7 @@ async function groupModelsForm(g) {
 
   // Tab 标签 = 平台名 (模型总数)
   const tabsHtml = () =>
-    plats.map((p) => tabBtn(p + ' (' + byPlatform[p].size + ')', p)).join('') +
+    Object.keys(byPlatform).sort().map((p) => tabBtn(p + ' (' + byPlatform[p].size + ')', p)).join('') +
     (orphanSel.size ? tabBtn('其他 (' + orphanSel.size + ')', ORPHAN) : '');
 
   const itemRow = (saveValue, kind) => {
@@ -2889,28 +2918,89 @@ async function groupModelsForm(g) {
     all.checked = items.length > 0 && items.every((el) => el.checked);
   };
 
-  bodyEl.innerHTML =
-    '<div class="muted" style="font-size:12px;margin-bottom:8px">' +
-      '勾选本分组可用的模型, 按上游平台分档, 支持逐档全选。' +
-      '<b>唯一 id = 平台::模型</b> —— 同名模型在不同平台互不影响, 且区分大小写。' +
-      '保存后, 该分组用户的 <code>/v1/models</code> 只展示勾选的模型(按平台过滤)。' +
-      '<b>全部不选 = 不过滤</b>(展示分组内全部模型)。' +
-    '</div>' +
-    (plats.length || orphanSel.size
-      ? '<div class="page-tabs" id="gm-tabs" style="margin-bottom:0">' + tabsHtml() + '</div>' +
-        '<div id="gm-panel" style="max-height:46vh;overflow-y:auto;border:1px solid var(--border);border-top:0;padding:0 10px"></div>'
-      : '');
+  const updateCountBadge = () => {
+    const c = $('#gm-count');
+    if (c) c.textContent = String(cur.size + orphanSel.size);
+  };
 
-  // 总的已选数徽标: 放到底部按钮区, 紧贴「取消」按钮左侧
-  const footEl = document.querySelector('.modal-foot');
-  if (footEl) {
-    footEl.insertAdjacentHTML('afterbegin',
-      '<span style="margin-right:auto;display:inline-block;padding:4px 12px;border-radius:14px;' +
-        'font-weight:600;font-size:13px;background:#2563eb;color:#fff">已选 <span id="gm-count">' +
-        (cur.size + orphanSel.size) + '</span> 个模型</span>');
-  }
+  // 整体骨架(提示行 + 获取行 + 平台tabs + 候选面板)。首次打开和
+  // 「从上游获取模型」完成后各渲染一次; 切平台档只重渲染 #gm-panel。
+  const renderShell = () => {
+    const plats = Object.keys(byPlatform).sort();
+    // curTab 可能因候选重建失效(或初始就是 ORPHAN 空档): 失效就跳回第一个平台档
+    if (plats.indexOf(curTab) === -1 && !(curTab === ORPHAN && orphanSel.size)) {
+      curTab = plats[0] || ORPHAN;
+    }
+    const miss = missingAccts();
 
-  renderPanel();
+    bodyEl.innerHTML =
+      '<div class="muted" style="font-size:12px;margin-bottom:8px">' +
+        '勾选本分组可用的模型, 按上游平台分档, 支持逐档全选。' +
+        '<b>唯一 id = 平台::模型</b> —— 同名模型在不同平台互不影响, 且区分大小写。' +
+        '保存后, 该分组用户的 <code>/v1/models</code> 只展示勾选的模型(按平台过滤)。' +
+        '<b>全部不选 = 不过滤</b>(展示分组内全部模型)。' +
+      '</div>' +
+      (miss.length
+        ? '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">' +
+            '<button class="btn sm" id="gm-fetch">从上游获取模型</button>' +
+            '<span class="muted" style="font-size:12px">' + miss.length + ' 个绑定账号还没拉取过模型列表 —— 直接点左侧按钮获取,' +
+            '与「模型管理」页的获取同源同效, 不用离开本弹窗。</span>' +
+          '</div>'
+        : '') +
+      (plats.length || orphanSel.size
+        ? '<div class="page-tabs" id="gm-tabs" style="margin-bottom:0">' + tabsHtml() + '</div>' +
+          '<div id="gm-panel" style="max-height:46vh;overflow-y:auto;border:1px solid var(--border);border-top:0;padding:0 10px"></div>'
+        : (accts.length
+            ? '<div class="empty">绑定的账号都还没声明模型 —— 点上方「从上游获取模型」,或到「模型管理」页获取后再回来。</div>'
+            : '<div class="empty">该分组还没有绑定上游账号。先到「上游账号」把账号绑定到本分组。</div>'));
+
+    // 总的已选数徽标: 放到底部按钮区, 紧贴「取消」按钮左侧。只插一次, 之后只更新数字
+    const footEl = document.querySelector('.modal-foot');
+    if (footEl && !$('#gm-count')) {
+      footEl.insertAdjacentHTML('afterbegin',
+        '<span style="margin-right:auto;display:inline-block;padding:4px 12px;border-radius:14px;' +
+          'font-weight:600;font-size:13px;background:#2563eb;color:#fff">已选 <span id="gm-count">' +
+          (cur.size + orphanSel.size) + '</span> 个模型</span>');
+    }
+    updateCountBadge();
+    renderPanel();
+  };
+
+  // 弹窗内直接「从上游获取模型」: 对还没声明模型的绑定账号逐个调
+  // GET /accounts/:id/models —— 与「模型管理」页的获取按钮**同一个接口**,
+  // 后端会顺手把结果写进 accounts.model_index, 两边操作互不影响。
+  // 拿不到(上游没实现 /v1/models 等)只计数不中断, 最后汇总提示。
+  const runDiscover = async () => {
+    const btn = $('#gm-fetch');
+    const targets = missingAccts();
+    if (!btn || btn.disabled || !targets.length) return;
+    btn.disabled = true;
+    let okN = 0, failN = 0;
+    for (let i = 0; i < targets.length; i++) {
+      const a = targets[i];
+      btn.textContent = '获取中… (' + (i + 1) + '/' + targets.length + ')';
+      try {
+        const r = await api('/accounts/' + a.id + '/models');
+        if (r && r.ok && Array.isArray(r.models) && r.models.length) {
+          a.model_index = r.models;   // 本地回填, missingAccts() 随之清零
+          okN++;
+        } else {
+          failN++;
+        }
+      } catch (e) {
+        failN++;
+      }
+    }
+    // 勾选状态不能丢: 拿当前已选集对重建后的候选重新匹配一遍
+    const prevSel = Array.from(cur.values()).concat(Array.from(orphanSel));
+    byPlatform = buildByPlatform();
+    applySelection(prevSel);
+    renderShell();
+    if (okN) toast('获取完成: ' + okN + ' 个账号成功' + (failN ? ', ' + failN + ' 个失败' : ''));
+    else toast('获取失败: 上游未返回模型列表(可能未实现该接口), 可到「模型管理」页查看详情', 'err');
+  };
+
+  renderShell();
 
   // 勾选状态存在 cur/orphanSel 里 —— 切 tab 重渲染不会丢其它档的勾选
   // 🚨 这段脚本在模板字面量里是裸 JS(不经过编译), 绝不能写 as/类型注解
@@ -2942,10 +3032,11 @@ async function groupModelsForm(g) {
     if (t.id !== 'gm-all') syncAllBox();
   });
 
-  // 切平台档: 只重渲染面板, 不重新取数
+  // 切平台档: 只重渲染面板, 不重新取数; 「从上游获取模型」按钮走 runDiscover
   bodyEl.addEventListener('click', (e) => {
     const t = e.target;
     if (!t || !t.closest) return;
+    if (t.id === 'gm-fetch' || t.closest('#gm-fetch')) { runDiscover(); return; }
     const tab = t.closest('[data-gmtab]');
     if (!tab) return;
     curTab = tab.getAttribute('data-gmtab') || curTab;
@@ -3682,7 +3773,20 @@ function logsRender(d) {
       ' (' + fmtNum(m.count) + ')</option>')).join('');
 
   const rows = logs.length ? logs.map((l) =>
-    '<tr>' +
+    l.checkin
+      // 签到行(后端从 user_checkins 合成, 见 getSelfLogs): 模型/令牌/Tokens/耗时
+      // 全空(老板需求「其他字段为空」), 费用列改成蓝色的「+额度」。
+      ? '<tr>' +
+          '<td class="muted">' + fmtTime(l.created_at) + '</td>' +
+          '<td class="muted">-</td>' +
+          '<td><span class="tag ok">每日签到</span></td>' +
+          '<td class="muted">-</td>' +
+          '<td class="muted">-</td>' +
+          '<td style="color:#2563eb;font-weight:600">+' + fmtMoney(l.credit) + '</td>' +
+          '<td class="muted">-</td>' +
+          '<td><button class="btn sm" data-log-detail="' + l.id + '">详情</button></td>' +
+        '</tr>'
+      : '<tr>' +
       '<td class="muted">' + fmtTime(l.created_at) + '</td>' +
       '<td class="mono">' + esc(l.key_name || '-') +
         (l.key_value ? '<br><span class="muted" style="font-size:11px">' + esc(l.key_value) + '</span>' : '') + '</td>' +
@@ -3696,7 +3800,7 @@ function logsRender(d) {
       '<td><button class="btn sm" data-log-detail="' + l.id + '">详情</button></td>' +
     '</tr>').join('')
     : '<tr><td colspan="8" class="empty">' +
-      (d.total ? '本页没有记录' : '还没有调用记录') + '</td></tr>';
+      (d.total ? '本页没有记录' : '还没有使用记录') + '</td></tr>';
 
   // 详情需要完整行 —— 存一份索引, 点"详情"时直接取, 不再打一次接口
   PAGES._logsCache = {};
@@ -3726,7 +3830,7 @@ function logsRender(d) {
         '</select></div>' +
       '</div></div></div>' +
 
-    '<div class="panel"><div class="panel-title">调用记录 (共 ' + fmtNum(d.total || 0) + ' 条)</div>' +
+    '<div class="panel"><div class="panel-title">使用记录 (共 ' + fmtNum(d.total || 0) + ' 条)</div>' +
       '<div class="table-wrap"><table><thead><tr>' +
         '<th>时间 (UTC+8)</th><th>令牌</th><th>模型</th><th>流</th>' +
         '<th>Tokens (入/出)</th><th>费用</th><th>耗时</th><th>详情</th>' +
@@ -3759,16 +3863,41 @@ function logsRender(d) {
   });
 }
 
-/** 单条调用记录的详情弹窗 */
+/** 单条使用记录的详情弹窗 */
 function showLogDetail(id) {
   const l = (PAGES._logsCache || {})[id];
   if (!l) return;
+
+  // ---- 签到行: 单独一套详情(见 getSelfLogs 的 UNION 说明) ----
+  // 老板需求: 「详情设置: 每日签到成功, 增加额度 $25.0000 额度, 签到时间」。
+  if (l.checkin) {
+    // request_id 形如 'checkin:<北京日期>', 拆出来当"签到日"展示
+    const rid = String(l.request_id || '');
+    const day = rid.indexOf('checkin:') === 0 ? rid.slice(8) : '';
+    openModal('使用详情 #' + l.id,
+      '<p style="font-size:14px;line-height:1.9;margin:0 0 10px">' +
+        '<span class="tag ok">每日签到成功</span> ' +
+        '增加额度 <strong style="color:#2563eb">+' + fmtMoney(l.credit) + '</strong>' +
+      '</p>' +
+      '<table><tbody>' +
+        row2('类型', '每日签到') +
+        row2('签到时间', fmtTime(l.created_at)) +
+        row2('签到日 (北京时间)', day || fmtTime(l.created_at)) +
+        row2('增加额度', '<strong style="color:#2563eb">+' + fmtMoney(l.credit) + '</strong>') +
+        row2('规则', '每天一次, 随机 +50 ~ 100; 按北京时间零点重置') +
+        row2('记录 ID', '<span class="mono">' + esc(rid || '-') + '</span>') +
+      '</tbody></table>',
+      '<button class="btn primary" id="m-close">关闭</button>');
+    $('#m-close').addEventListener('click', closeModal);
+    return;
+  }
+
   const statusHtml = l.error
     ? '<span class="tag err">失败</span>'
     : '<span class="tag ok">成功</span>';
   // 🚨 面向业务用户: 详情里**不露上游** —— 上游模型名 / 上游账号 / User-Agent 都属于
   // 网关内部信息, 用户看到了只会困惑(而且后端 /logs 也压根不下发这些字段, 见 getLogs)。
-  openModal('调用详情 #' + l.id,
+  openModal('使用详情 #' + l.id,
     '<table><tbody>' +
       row2('时间', fmtTime(l.created_at)) +
       row2('结果', statusHtml) +
@@ -3819,7 +3948,7 @@ function profileRender(d) {
   } else if (ck.checked_today) {
     ckBtn = '<button class="btn" disabled>今天已签到 · 连续 ' + fmtNum(ck.streak) + ' 天</button>';
   } else {
-    ckBtn = '<button class="btn primary" id="btn-checkin">立即签到 (随机 +100~200)</button>';
+    ckBtn = '<button class="btn primary" id="btn-checkin">立即签到 (随机 +50~100)</button>';
   }
 
   $('#main').innerHTML =
@@ -3835,7 +3964,7 @@ function profileRender(d) {
 
     '<div class="panel"><div class="panel-title">每日签到</div>' +
       '<div class="panel-body">' +
-        '<p class="hint">每天可签到一次, 随机增加 <strong>100 ~ 200</strong> 余额。' +
+        '<p class="hint">每天可签到一次, 随机增加 <strong>50 ~ 100</strong> 余额。' +
           '按北京时间零点重置 —— 当天已签过再点会提示。</p>' +
         '<div class="panel-actions">' + ckBtn + '</div>' +
         '<p class="hint" style="margin-top:14px">最近签到: ' + recent + '</p>' +
@@ -3883,7 +4012,7 @@ async function doCheckin() {
     // 409 = 今天已签(可能是另一个标签页先点了) —— 刷新一次让按钮变成"已签到"
     toast(e.message, 'err');
     if (/已经签到/.test(e.message || '')) PAGES.profile();
-    else if (btn) { btn.disabled = false; btn.textContent = '立即签到 (随机 +100~200)'; }
+    else if (btn) { btn.disabled = false; btn.textContent = '立即签到 (随机 +50~100)'; }
   } finally {
     stopProgress();
   }

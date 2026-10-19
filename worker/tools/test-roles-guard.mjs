@@ -381,7 +381,7 @@ check('资料页显示分组', /row2\('所属分组'/.test(inline));
 check('资料页有钱包(余额/总用量/总请求数)', /钱包/.test(inline) && /total_requests/.test(apiTs));
 check('签到按钮存在', /id="btn-checkin"/.test(inline));
 check('签到接口 POST /profile/checkin', /rest === 'checkin'/.test(apiTs) && /doCheckin/.test(apiTs));
-check('签到金额 100~200 随机', /CHECKIN_MIN = 100/.test(apiTs) && /CHECKIN_MAX = 200/.test(apiTs));
+check('签到金额 50~100 随机', /CHECKIN_MIN = 50/.test(apiTs) && /CHECKIN_MAX = 100/.test(apiTs));
 check('签到判重靠主键冲突(不是先查后写)',
   /ON CONFLICT\(user_id, day\) DO NOTHING/.test(apiTs) && /user_checkins/.test(apiTs));
 check('重复签到返回 409', /今天已经签到过了[\s\S]{0,80}409/.test(apiTs));

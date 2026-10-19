@@ -5,7 +5,7 @@
  * 做法:
  *   1. 管理员建一个一次性用户 (e2e-checkin-<ts>@local)
  *   2. 该用户登录 -> POST /profile/checkin
- *   3. 断言响应 amount 落在 [100,200](美元整数) 且不是 0
+ *   3. 断言响应 amount 落在 [50,100](美元整数) 且不是 0
  *   4. 查 user_checkins 里那一行的原始 amount, 应约等于 amount*1e8(微美元)
  *   5. 删掉这个一次性用户 (软删除) + 它的签到行
  *
@@ -90,8 +90,8 @@ if (bizCookie) {
   amount = j?.amount ?? null;
   check('签到 200', r.status === 200, `got ${r.status} ${JSON.stringify(j).slice(0, 140)}`);
   const n = Number(amount);
-  check(`签到金额是 100~200 美元整数(实得 ${amount})`,
-    Number.isFinite(n) && n >= 100 && n <= 200 && Math.abs(n - Math.round(n)) < 1e-6,
+  check(`签到金额是 50~100 美元整数(实得 ${amount})`,
+    Number.isFinite(n) && n >= 50 && n <= 100 && Math.abs(n - Math.round(n)) < 1e-6,
     `amount=${amount}`);
   check('签到金额不是 0(修好前是 $0.0000)', n > 0, `amount=${amount}`);
   check('响应里余额也按美元返回(不是微美元)',

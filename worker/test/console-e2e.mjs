@@ -500,8 +500,10 @@ async function main() {
       `status=${regLogs.status}`);
 
     const regRow = ((await call('/api/admin/users')).json.users ?? []).find((u) => u.id === regId) ?? {};
-    check('注册账号余额 0 / 平台白名单为空(夹带字段被忽略)',
-      Number(regRow.balance) === 0 && String(regRow.platform_access ?? '') === '',
+    // 2026-10-16 起注册固定赠送 $50 体验金(REGISTER_BONUS_USD); 夹带的
+    // balance:999999 仍必须被忽略 —— 余额只能是服务器送的那个数, 不能更多。
+    check('注册账号余额 = 注册体验金 $50(夹带 balance 被忽略) / 平台白名单为空',
+      Number(regRow.balance) === 50 && String(regRow.platform_access ?? '') === '',
       JSON.stringify({ balance: regRow.balance, pa: regRow.platform_access }));
 
     const dupRes = await postRegister({ email: regEmail, password: REG_PWD });
@@ -586,7 +588,7 @@ async function main() {
     check('/profile.checkin.enabled 是布尔', typeof prof.json.checkin?.enabled === 'boolean',
       JSON.stringify(prof.json.checkin ?? {}));
 
-    // ---- [14] 每日签到: 加余额 100~200, 当天重复 -> 409 ----
+    // ---- [14] 每日签到: 加余额 50~100, 当天重复 -> 409 ----
     console.log('\n[14] 每日签到(幂等 + 加余额 + 开关)');
     // 用一个干净的临时账号签到, 免得污染 admin 的余额(很难回滚)
     const ciEmail = `e2e-ci-${stamp}@local`;
@@ -610,18 +612,53 @@ async function main() {
 
     const ci1 = await ci('/api/admin/profile/checkin', { method: 'POST' });
     check('首次签到 200', ci1.status === 200, ci1.text.slice(0, 200));
-    // 奖励对外是**美元**整数 100~200 (接口已按 fromMicro 换算过)。
-    // 2026-09-21 修: 旧实现把 100~200 当微美元写入, 前端 toFixed(4) 显示 $0.0000,
+    // 奖励对外是**美元**整数 50~100 (接口已按 fromMicro 换算过)。
+    // 2026-09-21 修: 旧实现把整数当微美元写入, 前端 toFixed(4) 显示 $0.0000,
     // 用户看到的就是"签到新增金额是 0"。这里钉住"回传的是美元, 不是微美元"。
     const amountUsd = Number(ci1.json.amount);
-    check('签到金额是 100~200 美元整数(不是微美元)',
-      Number.isInteger(amountUsd) && amountUsd >= 100 && amountUsd <= 200,
+    check('签到金额是 50~100 美元整数(不是微美元)',
+      Number.isInteger(amountUsd) && amountUsd >= 50 && amountUsd <= 100,
       `amount=${JSON.stringify(ci1.json.amount)}`);
     check('签到后余额 = 原余额 + 签到金额',
       Math.abs(Number(ci1.json.balance) - (balBefore + amountUsd)) < 1e-9,
       `before=${balBefore} amount=${amountUsd} after=${ci1.json.balance}`);
     check('签到金额不会显示成 $0(前端 fmtUsd 最小两位小数也非零)',
       amountUsd >= 0.01, `amount=${amountUsd}`);
+
+    // ---- 签到日志进「使用日志」(2026-10-16 老板需求) ----
+    // 设计: 签到行**不落 usage_logs**, 由 getSelfLogs 从 user_checkins 现场
+    // UNION 合成 —— 所以它必须出现在列表里, 但**不能**被算成一次"请求"。
+    const lg = await ci('/api/admin/logs?limit=50');
+    check('签到后 /logs 仍 200', lg.status === 200, `status=${lg.status}`);
+    const ckRow = (lg.json.logs ?? []).find((r) => r.checkin === true);
+    check('使用日志里出现签到记录(checkin=true)', !!ckRow, JSON.stringify((lg.json.logs ?? []).slice(0, 2)));
+    check('签到记录: 模型为空 / 费用 0 / 增加额度=签到金额',
+      !!ckRow && ckRow.model === '' && Number(ckRow.cost) === 0 &&
+        Math.abs(Number(ckRow.credit) - amountUsd) < 1e-9,
+      JSON.stringify(ckRow));
+    check('签到记录: 令牌/Tokens/耗时全空',
+      !!ckRow && ckRow.key_id === null && Number(ckRow.input_tokens) === 0 &&
+        Number(ckRow.output_tokens) === 0 && Number(ckRow.duration_ms) === 0,
+      JSON.stringify(ckRow));
+    check('签到记录 request_id = checkin:<北京日期>(前端据此展示签到日)',
+      !!ckRow && /^checkin:\d{4}-\d{2}-\d{2}$/.test(String(ckRow.request_id)),
+      String(ckRow && ckRow.request_id));
+    check('签到记录 id 为负数(-rowid, 与调用日志自增 id 不撞)',
+      !!ckRow && Number(ckRow.id) < 0, String(ckRow && ckRow.id));
+    // 关键不变式: 签到不算请求 —— 汇总请求数不应因为签到而变化
+    const ciOnly = await ci('/api/admin/logs?limit=1');
+    check('签到不计入"请求数"汇总(数量 0, 只有签到行)',
+      Number(ciOnly.json.summary?.requests ?? -1) === 0 && Number(ciOnly.json.summary?.cost ?? -1) === 0,
+      JSON.stringify(ciOnly.json.summary));
+    check('签到行被算进列表总数(能翻到它)',
+      Number(ciOnly.json.total ?? 0) >= 1, String(ciOnly.json.total));
+    // 选「模型」筛选 / 选「失败」时, 签到行不该出现(它没有模型)
+    const lgModel = await ci('/api/admin/logs?limit=50&model=gpt-4o');
+    check('按模型筛选时不含签到行',
+      !(lgModel.json.logs ?? []).some((r) => r.checkin === true), JSON.stringify(lgModel.json.logs ?? []));
+    const lgErr = await ci('/api/admin/logs?limit=50&status=error');
+    check('筛选"失败"时不含签到行',
+      !(lgErr.json.logs ?? []).some((r) => r.checkin === true), JSON.stringify(lgErr.json.logs ?? []));
 
     const ci2 = await ci('/api/admin/profile/checkin', { method: 'POST' });
     check('当天重复签到 -> 409(不是"再加一次")', ci2.status === 409, `status=${ci2.status} ${ci2.text.slice(0, 120)}`);

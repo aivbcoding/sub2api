@@ -84,7 +84,7 @@ async function main() {
   const ci1 = await call('/api/admin/profile/checkin', { method: 'POST' });
   if (ci1.status === 200) {
     const micro = Math.round(Number(ci1.json.amount) * 1e8);
-    ok(micro >= 100 && micro <= 200, `签到金额 100~200 微美元(实际 ${micro})`);
+    ok(micro >= 50 && micro <= 100, `签到金额 50~100 美元(实际 ${micro})`);
     ok(Math.abs(Number(ci1.json.balance) - (balBefore + Number(ci1.json.amount))) < 1e-9,
       '签到后余额 = 原余额 + 金额');
     const ci2 = await call('/api/admin/profile/checkin', { method: 'POST' });

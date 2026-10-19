@@ -781,21 +781,21 @@ async function checkinEnabled(env: Env): Promise<boolean> {
 }
 
 /**
- * 签到金额区间(**美元**) —— 100~200 之间随机整数。
+ * 签到金额区间(**美元**) —— 50~100 之间随机整数。
  *
  * 🚨 单位坑 (2026-09-21 修): 旧实现把这个数字**直接**当成微美元写进
- * `users.balance`(= 加 100~200 微美元 = $0.000001 ~ $0.000002)。
+ * `users.balance`(= 加几十微美元 = $0.000001 级别)。
  * 前端 `fmtMoney` 是 `toFixed(4)`, 于是界面上永远显示 `$0.0000` ——
  * 用户看到的就是"签到新增的金额是 0"。
  *
- * 正确语义: 用户说的"加 100~200"是**余额数字加 100~200**(100~200 美元)。
+ * 正确语义: 这里说的是**余额数字加 50~100**(50~100 美元)。
  * 落库前统一转成微美元: `× 1e8`。
  */
-const CHECKIN_MIN = 100;
-const CHECKIN_MAX = 200;
+const CHECKIN_MIN = 50;
+const CHECKIN_MAX = 100;
 
 /**
- * 每日签到: 加余额 100~200 随机整数(美元)。
+ * 每日签到: 加余额 50~100 随机整数(美元)。
  *
  * 判重靠 `user_checkins(user_id, day)` 的主键 —— **不是**先查后写:
  * "查一次再插一次"在并发下两个人(或同一人两连点)会同时通过检查。
@@ -901,24 +901,53 @@ async function getSelfLogs(env: Env, auth: AdminAuthResult, req: Request): Promi
   const fromSql = `FROM usage_logs l
        LEFT JOIN api_keys k ON k.id = l.api_key_id`;
 
-  const limitPh = `?${binds.length + 1}`;
-  const offsetPh = `?${binds.length + 2}`;
+  // ---- 使用日志 = 调用记录 ∪ 签到记录 (2026-10-16 老板需求) ----
+  // 签到行**不落 usage_logs**: 它是账户流水而不是模型调用 —— 落进去会让概览/请求
+  // 日志里所有 COUNT(*)、按天、按 Key/平台分布全部带脏, 还得回头到处加排除条件。
+  // 这里改成从 user_checkins 现场合成"同形状"的行:
+  //   · 金额放 total_cost(actual_cost 恒 0 —— 全站所有金额聚合都只认 actual_cost)
+  //   · 模型/令牌/Tokens/耗时/流 全空; request_id = 'checkin:<日>' 供前端识别
+  //   · id 取 -rowid(负数), 与 usage_logs 的自增 id 天然不撞(前端详情缓存按 id 索引)
+  // 筛选语义: 选了模型 -> 签到行不参与(它没有模型); 选「失败」-> 不参与。
+  // 两表 created_at 都是 ISO 串(billing-repo 与签到都写 toISOString), 可直接排序。
+  const showCheckins = !model && status !== 'error';
+  const checkinPh = `?${binds.length + 1}`;
+  const limitPh = `?${binds.length + (showCheckins ? 2 : 1)}`;
+  const offsetPh = `?${binds.length + (showCheckins ? 3 : 2)}`;
 
-  const [rows, total, agg, models] = await Promise.all([
-    env.DB.prepare(
-      `SELECT l.id, l.request_id, l.created_at, l.requested_model, l.model,
+  const callsSql = `SELECT l.id AS id, l.request_id, l.created_at, l.requested_model, l.model,
+              l.billing_mode,
               l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens,
               l.total_cost, l.actual_cost, l.duration_ms, l.first_token_ms,
               l.stream, l.ip_address,
               k.name AS key_name, k.id AS key_id, k.key AS key_value
-       ${fromSql} ${whereSql}
-       ORDER BY l.id DESC LIMIT ${limitPh} OFFSET ${offsetPh}`,
+       ${fromSql} ${whereSql}`;
+
+  const checkinSql = `SELECT -c.rowid AS id, ('checkin:' || c.day) AS request_id, c.created_at,
+              '' AS requested_model, '' AS model, 'checkin' AS billing_mode,
+              0 AS input_tokens, 0 AS output_tokens, 0 AS cache_read_tokens, 0 AS cache_creation_tokens,
+              c.amount AS total_cost, 0 AS actual_cost, 0 AS duration_ms, NULL AS first_token_ms,
+              0 AS stream, '' AS ip_address,
+              NULL AS key_name, NULL AS key_id, NULL AS key_value
+       FROM user_checkins c WHERE c.user_id = ${checkinPh}`;
+
+  const unionSql = showCheckins ? `${callsSql} UNION ALL ${checkinSql}` : callsSql;
+  const listBinds: unknown[] = showCheckins ? [...binds, me.id] : binds;
+
+  const [rows, total, agg, models] = await Promise.all([
+    env.DB.prepare(
+      // 外面再包一层子查询: 单分支时(不合成签到行)的 FROM 是
+      // `usage_logs l LEFT JOIN api_keys k`, 而 created_at / id 两表都有,
+      // 直接 ORDER BY 会报 "ambiguous column name" —— 包一层后排序只认
+      // 结果集的输出列(l.id AS id / l.created_at), 两种分支都安全。
+      `SELECT * FROM (${unionSql})
+       ORDER BY created_at DESC, id DESC LIMIT ${limitPh} OFFSET ${offsetPh}`,
     )
-      .bind(...binds, limit, offset)
+      .bind(...listBinds, limit, offset)
       .all<Record<string, unknown>>(),
 
-    env.DB.prepare(`SELECT COUNT(*) AS c ${fromSql} ${whereSql}`)
-      .bind(...binds)
+    env.DB.prepare(`SELECT COUNT(*) AS c FROM (${unionSql})`)
+      .bind(...listBinds)
       .first<{ c: number }>(),
 
     env.DB.prepare(
@@ -943,26 +972,34 @@ async function getSelfLogs(env: Env, auth: AdminAuthResult, req: Request): Promi
   ]);
 
   return json({
-    logs: (rows.results ?? []).map((r) => ({
-      id: r.id,
-      request_id: r.request_id,
-      created_at: r.created_at,
-      requested_model: r.requested_model,
-      model: r.model,
-      input_tokens: r.input_tokens,
-      output_tokens: r.output_tokens,
-      cache_read_tokens: r.cache_read_tokens,
-      cache_creation_tokens: r.cache_creation_tokens,
-      cost: fromMicro(r.actual_cost ?? r.total_cost),
-      duration_ms: r.duration_ms,
-      first_token_ms: r.first_token_ms,
-      stream: Number(r.stream ?? 0) === 1,
-      ip_address: r.ip_address ?? '',
-      key_id: r.key_id,
-      key_name: r.key_name ?? '',
-      key_value: maskKey(String(r.key_value ?? '')),
-      error: String(r.model ?? '').startsWith('error:'),
-    })),
+    logs: (rows.results ?? []).map((r) => {
+      const isCheckin = String(r.billing_mode) === 'checkin';
+      return {
+        id: r.id,
+        request_id: r.request_id,
+        created_at: r.created_at,
+        requested_model: r.requested_model,
+        model: r.model,
+        billing_mode: String(r.billing_mode ?? 'token'),
+        // 签到行(见上面 UNION 说明): 金额在 total_cost, actual_cost 恒 0;
+        // 只给签到行下发 credit, 普通调用行恒 0, 前端据此把「费用」列改成「+额度」。
+        checkin: isCheckin,
+        credit: isCheckin ? fromMicro(r.total_cost) : 0,
+        input_tokens: r.input_tokens,
+        output_tokens: r.output_tokens,
+        cache_read_tokens: r.cache_read_tokens,
+        cache_creation_tokens: r.cache_creation_tokens,
+        cost: fromMicro(r.actual_cost ?? r.total_cost),
+        duration_ms: r.duration_ms,
+        first_token_ms: r.first_token_ms,
+        stream: Number(r.stream ?? 0) === 1,
+        ip_address: r.ip_address ?? '',
+        key_id: r.key_id,
+        key_name: r.key_name ?? '',
+        key_value: maskKey(String(r.key_value ?? '')),
+        error: String(r.model ?? '').startsWith('error:'),
+      };
+    }),
     total: total?.c ?? 0,
     limit,
     offset,
@@ -3662,6 +3699,12 @@ export const REGISTRATION_SETTING = 'registration_enabled';
 export const AUTO_APPROVE_SETTING = 'registration_auto_approve';
 
 /**
+ * 注册体验金(**美元**) —— 自助注册成功即赠送, 2026-10-16 起为 $50。
+ * 只作用于自助注册(handleRegister); 管理员后台建号不送(余额由管理员自己填)。
+ */
+export const REGISTER_BONUS_USD = 50;
+
+/**
  * 开关解析。**只有显式 'false' 才算关** —— 键不存在/空串一律按默认值走。
  * 与门户时期同一套语义: 部署新代码时老库里没有这个键, 不该因为"读到空"就把入口锁死。
  */
@@ -3754,11 +3797,14 @@ export async function handleRegister(
 
   // 注意 VALUES 里 role 是**字面量 'user'**, 不是绑定参数 —— 让"不可提权"这件事
   // 在 SQL 文本上就一眼可见, 将来谁想加个 role 参数也会先看到这行注释。
+  // balance 是服务器固定赠送的注册体验金(REGISTER_BONUS_USD), 客户端夹带的
+  // balance 早已在开头被整体丢弃 —— 想多送只能改这里的常量。
+  const bonus = toMicro(REGISTER_BONUS_USD);
   const res = await env.DB.prepare(
     `INSERT INTO users (email, password_hash, role, balance, concurrency, rpm_limit, status, username, notes, platform_access)
-     VALUES (?1, ?2, 'user', 0, 5, 0, ?3, ?4, '', '')`,
+     VALUES (?1, ?2, 'user', ?3, 5, 0, ?4, ?5, '', '')`,
   )
-    .bind(email, hash, autoApprove ? 'active' : 'disabled', username || email)
+    .bind(email, hash, bonus, autoApprove ? 'active' : 'disabled', username || email)
     .run();
 
   const newId = Number(res.meta?.last_row_id ?? 0);
@@ -3768,7 +3814,7 @@ export async function handleRegister(
     'create',
     'user',
     newId,
-    autoApprove ? '自助注册(直接可用)' : '自助注册(待审核)',
+    `自助注册${autoApprove ? '(直接可用)' : '(待审核)'} 赠送$${REGISTER_BONUS_USD}体验金`,
     req,
   );
 
@@ -3776,9 +3822,10 @@ export async function handleRegister(
     ok: true,
     id: newId,
     auto_approved: autoApprove,
+    bonus_usd: REGISTER_BONUS_USD,
     message: autoApprove
-      ? '注册成功, 请登录。'
-      : '注册成功, 请等管理员审核后再登录。',
+      ? `注册成功, 已赠送 $${REGISTER_BONUS_USD} 体验金, 请登录。`
+      : `注册成功, 已赠送 $${REGISTER_BONUS_USD} 体验金, 请等管理员审核后再登录。`,
   });
 }
 

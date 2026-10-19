@@ -682,9 +682,21 @@ check('列表「模型」列显示用户自己发的名字(requested_model → m
   /l\.requested_model \|\| l\.model \|\| '-'/.test(lrBody));
 
 // 后端 /logs(业务用户)不下发上游字段
+// 切片到**函数结束**(下一个顶层 function 声明), 不写死长度 —— 2026-10-16 踩过:
+// getSelfLogs 加了签到 UNION 之后变长, 写死 4200 字符把响应字段挤出窗口, 报出
+// "字段明明还在却红"的假阴性; 切到函数末尾既保住正向断言, 也不放负向断言
+// (user_agent / upstream_model / JOIN accounts) 溢出到隔壁函数去。
 const getLogsIdx = apiSrc.indexOf('async function getSelfLogs');
-const glBody = getLogsIdx === -1 ? '' : apiSrc.slice(getLogsIdx, getLogsIdx + 4200);
+const glEndRel = getLogsIdx === -1
+  ? -1
+  : apiSrc.slice(getLogsIdx + 1).search(/\n(?:async )?function [A-Za-z0-9_]+/);
+const glEnd = getLogsIdx === -1 || glEndRel === -1 ? -1 : getLogsIdx + 1 + glEndRel;
+const glBody = getLogsIdx === -1
+  ? ''
+  : apiSrc.slice(getLogsIdx, glEnd === -1 ? undefined : glEnd);
 check('抠到 getLogs()', glBody.length > 2000, 'len=' + glBody.length);
+check('切片落在 getSelfLogs 函数体内(没吃到隔壁函数)',
+  glBody.includes('checkin: isCheckin') && glBody.includes('const unionSql'));
 check('🧨 /logs 不再 SELECT l.user_agent', !/l\.user_agent/.test(glBody));
 check('🧨 /logs 不再 SELECT l.upstream_model', !/l\.upstream_model/.test(glBody));
 check('🧨 /logs 不再 JOIN accounts(上游账号不再出现在响应里)', !/LEFT JOIN accounts a/.test(glBody));
