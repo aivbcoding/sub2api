@@ -441,6 +441,32 @@ const ADMIN_HTML = `<!DOCTYPE html>
   .card .k { color: var(--muted); font-size: 12px; margin-bottom: 7px; }
   .card .v { font-size: 23px; font-weight: 700; letter-spacing: -.015em; }
   .card .v small { font-size: 12px; font-weight: 400; color: var(--muted); }
+  /* 数据面板卡片: 左侧彩色圆图标 + 右侧「标签/大号数值」, 底部虚线再挂一组副指标。
+     副指标(.k2)用虚线分隔, 是为了跟上面那组主指标在视觉上分成两层, 不像同一行。 */
+  .card-ico { display: flex; align-items: flex-start; gap: 12px; }
+  .card-ico .ci {
+    flex: 0 0 auto; width: 34px; height: 34px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .card-ico .ci svg {
+    width: 17px; height: 17px; fill: none; stroke: #fff;
+    stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+  }
+  .card-ico .cb { flex: 1 1 auto; min-width: 0; }
+  /* 主值行: 值 + 右侧小字, 用 flex 排 —— 小字是独立 flex item, 不会被折行拆开 */
+  .card-ico .cb .v { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; overflow-wrap: anywhere; }
+  .card-ico .cb .v small { white-space: nowrap; }
+  .card-ico .k2 {
+    display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-top: 11px;
+    padding-top: 9px; border-top: 1px dashed var(--border);
+  }
+  .card-ico .k2 span { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  /* 值整体不折行: 窄卡片里让它换到下一行, 而不是把数字本身断成几段 */
+  .card-ico .k2 b { font-size: 15px; font-weight: 700; letter-spacing: -.01em; white-space: nowrap; }
+  .ci-blue { background: #3b82f6; } .ci-cyan { background: #06b6d4; }
+  .ci-green { background: #22c55e; } .ci-yellow { background: #eab308; }
+  .ci-pink { background: #ec4899; } .ci-purple { background: #8b5cf6; }
+  .ci-orange { background: #f59e0b; } .ci-slate { background: #64748b; }
 
   /* 表格 / 详情面板 */
   .panel {
@@ -3726,6 +3752,39 @@ function boardRender(d) {
 function statCard(k, v, sub) {
   return card(k, v + (sub ? ' <small>' + esc(sub) + '</small>' : ''));
 }
+/**
+ * 数据面板卡片(带彩色圆图标 + 两组指标)。
+ *   icoColor = 圆底色类名(ci-blue/green/…); ico = ICO_* 里的图标 key
+ *   k2Label/k2Value = 底部虚线那组副指标, 传 '' 就整组不渲染
+ * sub 走 HTML(允许 <small> 之类), k2Label/k2Value 会被转义。
+ */
+const ICO_SVG = {
+  chat: '<path d="M21 12a8 8 0 0 1-8 8H7l-4 3v-5a8 8 0 0 1 8-11h2a8 8 0 0 1 8 5z"/>',
+  zap: '<path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/>',
+  coin: '<circle cx="12" cy="12" r="9"/><path d="M12 6.5v11M9.5 9.2h4.2a1.7 1.7 0 0 1 0 3.4h-3.4a1.7 1.7 0 0 0 0 3.4h4.2"/>',
+  wallet: '<path d="M3 8a2 2 0 0 1 2-2h11a3 3 0 0 1 3 3v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M16 12h4"/>',
+  chart: '<path d="M4 20V11M10 20V4M16 20v-6M2 20h20"/>',
+  fire: '<path d="M12 3c1.2 3.2-.8 4.6-2 6.6-1 1.8-.4 3 1 3 1.4 0 2-1 2-2.6 1.9 1.9 3 4.2 3 6.2A6.4 6.4 0 0 1 9.6 16c0-3.8 3-5.8 3.9-7.6.7-1.4.5-3.4-.2-5.4z"/>',
+  token: '<path d="M4 7h16M12 7v13M9.5 20h5"/>',
+  gauge: '<path d="M4 17a8 8 0 1 1 16 0"/><path d="m12 13 4-4"/>',
+};
+function statIco(icoColor, ico, k, v, sub, k2Label, k2Value) {
+  const svg = ICO_SVG[ico] || ICO_SVG.chart;
+  return '<div class="card card-ico">' +
+    '<span class="ci ' + esc(icoColor) + '"><svg viewBox="0 0 24 24">' + svg + '</svg></span>' +
+    '<div class="cb">' +
+      '<div class="k">' + esc(k) + '</div>' +
+      '<div class="v">' + v + (sub ? ' <small>' + esc(sub) + '</small>' : '') + '</div>' +
+      (k2Label
+        ? '<div class="k2"><span>' + esc(k2Label) + '</span><b>' + esc(k2Value) + '</b></div>'
+        : '') +
+    '</div></div>';
+}
+/** 平均每次消耗(分母为 0 时给 0, 避免出现 NaN/Infinity) */
+function avgCost(total, count) {
+  const c = Number(count) || 0;
+  return c > 0 ? fmtMoney(Number(total || 0) / c) : fmtMoney(0);
+}
 function row2(k, v) {
   return '<tr><td class="muted" style="width:160px">' + esc(k) + '</td><td>' + v + '</td></tr>';
 }
@@ -3809,9 +3868,14 @@ function logsRender(d) {
       '<button class="btn" id="btn-refresh">刷新</button></div></div>' +
 
     '<div class="cards">' +
-      statCard('请求数', fmtNum(s.requests), s.errors ? '失败 ' + fmtNum(s.errors) : '无失败') +
-      statCard('Tokens', fmtNum(s.tokens), '输入+输出') +
-      statCard('消耗', fmtMoney(s.cost), '') +
+      statIco('ci-blue', 'chat', '请求数', fmtNum(s.requests),
+        s.errors ? '失败 ' + fmtNum(s.errors) : '无失败',
+        '成功率', s.requests > 0 ? ((s.requests - (s.errors || 0)) * 100 / s.requests).toFixed(1) + '%' : '-') +
+      statIco('ci-cyan', 'token', 'Tokens', fmtNum(s.tokens), '',
+        '输入 / 输出',
+        (s.input_tokens != null ? fmtNum(s.input_tokens) + ' / ' + fmtNum(s.output_tokens) : '-')) +
+      statIco('ci-pink', 'coin', '消耗', fmtMoney(s.cost), '',
+        '平均每次', avgCost(s.cost, s.requests)) +
     '</div>' +
 
     '<div class="panel"><div class="panel-title">筛选</div>' +
@@ -3949,10 +4013,13 @@ function profileRender(d) {
       '<button class="btn" id="btn-refresh">刷新</button></div></div>' +
 
     '<div class="cards">' +
-      statCard('余额', fmtMoney(w.balance), w.frozen_balance > 0 ? '冻结 ' + fmtMoney(w.frozen_balance) : '') +
-      statCard('总用量', fmtMoney(w.total_cost), fmtNum(w.total_tokens) + ' tokens') +
-      statCard('总请求数', fmtNum(w.total_requests), '') +
-      statCard('连续签到', fmtNum(ck.streak) + ' 天', ck.checked_today ? '今天已签' : '今天还没签') +
+      statIco('ci-green', 'wallet', '当前余额', fmtMoney(w.balance),
+        w.frozen_balance > 0 ? '冻结 ' + fmtMoney(w.frozen_balance) : '',
+        '历史消耗', fmtMoney(w.total_cost)) +
+      statIco('ci-blue', 'chart', '使用统计', fmtNum(w.total_requests), '累计请求',
+        '连续签到', fmtNum(ck.streak) + ' 天') +
+      statIco('ci-orange', 'fire', '资源消耗', fmtNum(w.total_tokens), '累计 Tokens',
+        '平均每次', avgCost(w.total_cost, w.total_requests)) +
     '</div>' +
 
     '<div class="panel"><div class="panel-title">每日签到</div>' +
