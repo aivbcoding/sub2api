@@ -920,8 +920,21 @@ const ADMIN_HTML = `<!DOCTYPE html>
 
   /* ---- 概览页: 「用量概览」右侧并排一列「工具类」 ----
      左边是数据表(信息多, 占比大), 右边是工具入口(窄一点就够)。 */
-  .ov-2col { display: grid; grid-template-columns: 1.45fr 1fr; gap: 16px; align-items: start; }
+  /* 两列等高: 工具类内容少, 让它的 panel 撑满整行高度(底部留白),
+     否则右列会比左列矮一截, 看着像没对齐。
+     margin-bottom: 22px 是给下面的「历史使用情况」留的间隔 ——
+     .panel + .panel 那条规则只认**相邻兄弟**, 中间隔了 .ov-2col 这个 div, 不生效。 */
+  .ov-2col {
+    display: grid; grid-template-columns: 1.45fr 1fr; gap: 16px;
+    align-items: stretch; margin-bottom: 22px;
+  }
   @media (max-width: 980px) { .ov-2col { grid-template-columns: 1fr; } }
+  /* .panel + .panel 的 margin-top:22px 会让右列(工具类)整列下移, 这里归零 */
+  .ov-2col > .panel,
+  .ov-2col > .panel + .panel { margin-top: 0; }
+  /* panel 撑满 grid 行高, 内部 panel-body 吃掉多余空间 → 底部留白 */
+  .ov-2col > .panel { height: 100%; display: flex; flex-direction: column; }
+  .ov-2col > .panel > .panel-body { flex: 1 1 auto; }
   .tool-row { display: flex; align-items: center; gap: 10px; }
   .tool-badge {
     flex: 0 0 auto; width: 36px; height: 36px; border-radius: 50%;
