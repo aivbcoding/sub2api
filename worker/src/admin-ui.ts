@@ -431,7 +431,10 @@ const ADMIN_HTML = `<!DOCTYPE html>
   .page-head .actions { display: flex; gap: 8px; }
 
   /* 卡片 / 统计 */
-  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 14px; margin-bottom: 24px; }
+  /* ⚠️ 必须用 auto-fit(不是 auto-fill): auto-fill 会按容器宽度造出多余空列,
+     卡片数少于列数时就被挤在左边窄列里(数字断行/右侧留大片空白)。
+     auto-fit 会把空轨道折叠, 3 张卡就平分整行。 */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin-bottom: 24px; }
   .card {
     background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-lg);
     padding: 16px 17px; box-shadow: var(--shadow-1);
@@ -441,18 +444,21 @@ const ADMIN_HTML = `<!DOCTYPE html>
   .card .k { color: var(--muted); font-size: 12px; margin-bottom: 7px; }
   .card .v { font-size: 23px; font-weight: 700; letter-spacing: -.015em; }
   .card .v small { font-size: 12px; font-weight: 400; color: var(--muted); }
-  /* 数据面板卡片: 左侧彩色圆图标 + 右侧「标签/大号数值」, 底部虚线再挂一组副指标。
-     副指标(.k2)用虚线分隔, 是为了跟上面那组主指标在视觉上分成两层, 不像同一行。 */
-  .card-ico { display: flex; align-items: flex-start; gap: 12px; }
+  /* 数据面板卡片: 上半 = 圆形图标 + (标签 / 大号数值) 一组, 图标与这组文字**垂直居中**
+     (圆心对齐文字块的视觉中心, 不要顶对齐 —— 顶对齐会让图标圆心悬在标签上方, 很别扭);
+     下半 = 虚线分隔的副指标组, 整行独立, 不参与图标对齐。 */
+  .card-ico { display: block; }
+  .card-ico .ch { display: flex; align-items: center; gap: 12px; }
   .card-ico .ci {
-    flex: 0 0 auto; width: 34px; height: 34px; border-radius: 50%;
+    flex: 0 0 auto; width: 36px; height: 36px; border-radius: 50%;
     display: inline-flex; align-items: center; justify-content: center;
   }
   .card-ico .ci svg {
-    width: 17px; height: 17px; fill: none; stroke: #fff;
+    width: 18px; height: 18px; fill: none; stroke: #fff;
     stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
   }
   .card-ico .cb { flex: 1 1 auto; min-width: 0; }
+  .card-ico .cb .k { margin-bottom: 4px; }
   /* 主值行: 值 + 右侧小字, 用 flex 排 —— 小字是独立 flex item, 不会被折行拆开 */
   .card-ico .cb .v { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; overflow-wrap: anywhere; }
   .card-ico .cb .v small { white-space: nowrap; }
@@ -3597,10 +3603,14 @@ function overviewRender(d) {
 
   const cards =
     '<div class="cards">' +
-      statCard('余额', fmtMoney(me.balance), me.frozen_balance > 0 ? '冻结 ' + fmtMoney(me.frozen_balance) : '') +
-      statCard('近 24h 消耗', fmtMoney(h.cost), fmtNum(h.requests) + ' 次请求') +
-      statCard('累计消耗', fmtMoney(c.total_cost), fmtNum(c.total_requests) + ' 次请求') +
-      statCard('累计 Tokens', fmtNum(c.total_tokens), '输入+输出') +
+      statIco('ci-green', 'wallet', '账户数据', fmtMoney2(me.balance),
+        me.frozen_balance > 0 ? '冻结 ' + fmtMoney2(me.frozen_balance) : '当前余额',
+        '累计消耗', fmtMoney2(c.total_cost)) +
+      statIco('ci-blue', 'chat', '使用统计', fmtNum(h.requests),
+        h.errors ? '失败 ' + fmtNum(h.errors) : '近 24 小时',
+        '累计请求', fmtNum(c.total_requests)) +
+      statIco('ci-cyan', 'token', '资源消耗', fmtNum(c.total_tokens), '累计 Tokens',
+        '近 24h 消耗', fmtMoney2(h.cost)) +
     '</div>';
 
   // 公告: 没有就整块不渲染(空面板比没有更碍眼)
@@ -3771,14 +3781,17 @@ const ICO_SVG = {
 function statIco(icoColor, ico, k, v, sub, k2Label, k2Value) {
   const svg = ICO_SVG[ico] || ICO_SVG.chart;
   return '<div class="card card-ico">' +
-    '<span class="ci ' + esc(icoColor) + '"><svg viewBox="0 0 24 24">' + svg + '</svg></span>' +
-    '<div class="cb">' +
-      '<div class="k">' + esc(k) + '</div>' +
-      '<div class="v">' + v + (sub ? ' <small>' + esc(sub) + '</small>' : '') + '</div>' +
-      (k2Label
-        ? '<div class="k2"><span>' + esc(k2Label) + '</span><b>' + esc(k2Value) + '</b></div>'
-        : '') +
-    '</div></div>';
+    '<div class="ch">' +
+      '<span class="ci ' + esc(icoColor) + '"><svg viewBox="0 0 24 24">' + svg + '</svg></span>' +
+      '<div class="cb">' +
+        '<div class="k">' + esc(k) + '</div>' +
+        '<div class="v">' + v + (sub ? ' <small>' + esc(sub) + '</small>' : '') + '</div>' +
+      '</div>' +
+    '</div>' +
+    (k2Label
+      ? '<div class="k2"><span>' + esc(k2Label) + '</span><b>' + esc(k2Value) + '</b></div>'
+      : '') +
+  '</div>';
 }
 /** 平均每次消耗(分母为 0 时给 0, 避免出现 NaN/Infinity) */
 function avgCost(total, count) {
@@ -3874,7 +3887,7 @@ function logsRender(d) {
       statIco('ci-cyan', 'token', 'Tokens', fmtNum(s.tokens), '',
         '输入 / 输出',
         (s.input_tokens != null ? fmtNum(s.input_tokens) + ' / ' + fmtNum(s.output_tokens) : '-')) +
-      statIco('ci-pink', 'coin', '消耗', fmtMoney(s.cost), '',
+      statIco('ci-pink', 'coin', '消耗', fmtMoney2(s.cost), '',
         '平均每次', avgCost(s.cost, s.requests)) +
     '</div>' +
 
@@ -4013,9 +4026,9 @@ function profileRender(d) {
       '<button class="btn" id="btn-refresh">刷新</button></div></div>' +
 
     '<div class="cards">' +
-      statIco('ci-green', 'wallet', '当前余额', fmtMoney(w.balance),
-        w.frozen_balance > 0 ? '冻结 ' + fmtMoney(w.frozen_balance) : '',
-        '历史消耗', fmtMoney(w.total_cost)) +
+      statIco('ci-green', 'wallet', '当前余额', fmtMoney2(w.balance),
+        w.frozen_balance > 0 ? '冻结 ' + fmtMoney2(w.frozen_balance) : '',
+        '历史消耗', fmtMoney2(w.total_cost)) +
       statIco('ci-blue', 'chart', '使用统计', fmtNum(w.total_requests), '累计请求',
         '连续签到', fmtNum(ck.streak) + ' 天') +
       statIco('ci-orange', 'fire', '资源消耗', fmtNum(w.total_tokens), '累计 Tokens',

@@ -351,7 +351,10 @@ check('「我的 API Key」已改名 API秘钥', /data-page="mykeys">API秘钥</
 check('旧名「我的 API Key」已不在侧栏', !/data-page="mykeys">我的 API Key</.test(html));
 
 // 概览页: 四块内容
-check('概览页含额度信息(余额卡片)', /statCard\('余额'/.test(inline));
+// 2026-10-22: 概览页卡片改成带图标的 statIco(账户数据/使用统计/资源消耗),
+// 断言跟着改成新写法 —— 意图不变(概览页仍必须展示余额), 只是不再用 statCard('余额')。
+check('概览页含额度信息(余额卡片)',
+  /statIco\('ci-green', 'wallet'/.test(inline) && /fmtMoney2\(me\.balance\)/.test(inline));
 check('概览页含公告信息块', /公告信息/.test(inline));
 check('概览页含近 24h 消耗', /近 24 小时/.test(inline) && /last24h/.test(apiTs));
 check('概览页含历史使用情况', /历史使用情况/.test(inline));
