@@ -917,6 +917,23 @@ const ADMIN_HTML = `<!DOCTYPE html>
   .form-row .hint { font-size: 11px; color: var(--muted); margin: 4px 0 0; }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
+  /* ---- 概览页: 「用量概览」右侧并排一列「工具类」 ----
+     左边是数据表(信息多, 占比大), 右边是工具入口(窄一点就够)。 */
+  .ov-2col { display: grid; grid-template-columns: 1.45fr 1fr; gap: 16px; align-items: start; }
+  @media (max-width: 980px) { .ov-2col { grid-template-columns: 1fr; } }
+  .tool-row { display: flex; align-items: center; gap: 10px; }
+  .tool-badge {
+    flex: 0 0 auto; width: 36px; height: 36px; border-radius: 50%;
+    background: #3b82f6; color: #fff; font-size: 11px; line-height: 1;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .tool-main { flex: 1 1 auto; min-width: 0; }
+  .tool-head { font-weight: 600; font-size: 13.5px; }
+  .tool-head .muted { font-weight: 400; margin-left: 6px; }
+  .tool-links { margin-top: 7px; display: flex; flex-direction: column; gap: 5px; }
+  .tool-link { color: #2563eb; text-decoration: none; font-size: 12.5px; overflow-wrap: anywhere; }
+  .tool-link:hover { text-decoration: underline; }
+
   /* ---- 弹窗里的表单分区 ----
      长表单(角色权限)平铺一堆 .form-row 很难读, 用分段标题 + 分隔线切成几块。 */
   .form-section + .form-section { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border); }
@@ -3737,11 +3754,36 @@ function overviewRender(d) {
         '按北京时间切天。</p></div>' +
     '</div>';
 
+  // ---- 工具类: 与「用量概览」并排一列 ----
+  // 测速链接带**当前域名**(location.origin), 换了域名不用改代码。
+  const origin = location.origin;
+  const speedUrl = 'https://www.tcptest.cn/http/' + encodeURIComponent(origin + '/');
+  const toolPanel =
+    '<div class="panel"><div class="panel-title">工具类</div>' +
+      '<div class="panel-body">' +
+        '<div class="tool-row">' +
+          '<span class="tool-badge">工具</span>' +
+          '<div class="tool-main">' +
+            '<div class="tool-head">默认 API<span class="muted">' + esc(origin) + '</span></div>' +
+            '<div class="tool-links">' +
+              '<a class="tool-link" href="' + esc(speedUrl) + '" target="_blank" rel="noopener">测速 · ' + esc(origin) + '</a>' +
+              '<a class="tool-link" href="https://ccswitch.io/zh/" target="_blank" rel="noopener">ccswitch 跳转</a>' +
+            '</div>' +
+          '</div>' +
+          '<a class="btn sm" href="' + esc(speedUrl) + '" target="_blank" rel="noopener">测速</a>' +
+        '</div>' +
+        '<p class="hint" style="margin-top:12px">测速会用当前域名去测第三方中转的连通与速度; ' +
+          'ccswitch 用于在客户端里一键切换本平台配置。</p>' +
+      '</div>' +
+    '</div>';
+
   $('#main').innerHTML =
     '<div class="page-head"><h2>概览</h2><div class="actions">' +
       '<span class="muted" style="align-self:center">' + esc(scopeTip) + '</span>' +
       '<button class="btn" id="btn-refresh">刷新</button></div></div>' +
-    cards + annPanel + h24 + historyPanel;
+    cards + annPanel +
+    '<div class="ov-2col">' + h24 + toolPanel + '</div>' +
+    historyPanel;
 
   $('#btn-refresh').addEventListener('click', () => PAGES.overview());
 }
