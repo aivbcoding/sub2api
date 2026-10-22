@@ -4169,8 +4169,7 @@ async function fetchModelsWithKey(key) {
 
 function newMyKey() {
   openModal('新建 API Key',
-    '<div class="form-row"><label>名称</label><input id="mk-name" placeholder="例如: 我的脚本"></div>' +
-    '<p class="hint">新建的 Key 会挂到默认分组, 并立刻继承该分组的路由配置(平台重定向 / 白名单 / 分组平台)。</p>',
+    '<div class="form-row"><label>名称</label><input id="mk-name" placeholder="例如: 我的脚本"></div>',
     '<button class="btn" id="m-cancel">取消</button><button class="btn primary" id="m-save">创建</button>');
   $('#m-cancel').addEventListener('click', closeModal);
   $('#m-save').addEventListener('click', async () => {
