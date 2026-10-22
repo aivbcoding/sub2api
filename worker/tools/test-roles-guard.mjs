@@ -377,7 +377,9 @@ check('日志有分页', /logsState/.test(inline) && /lg-next/.test(inline));
 console.log('\n[15] 个人资料与每日签到');
 check('资料页显示用户名称', /row2\('用户名称'/.test(inline));
 check('资料页显示邮箱', /row2\('邮箱'/.test(inline));
-check('资料页显示分组', /row2\('所属分组'/.test(inline));
+// 2026-10-22: 用户级没有「分组」——分组是 **API Key** 的概念(每把 Key 挂一个分组),
+// 资料页原本那行「所属分组」展示的是自助默认分组, 语义上误导, 已删。
+check('资料页不再显示用户分组(分组只属于 Key)', !/row2\('所属分组'/.test(inline));
 check('资料页有钱包(余额/总用量/总请求数)', /钱包/.test(inline) && /total_requests/.test(apiTs));
 check('签到按钮存在', /id="btn-checkin"/.test(inline));
 check('签到接口 POST /profile/checkin', /rest === 'checkin'/.test(apiTs) && /doCheckin/.test(apiTs));

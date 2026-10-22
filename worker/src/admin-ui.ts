@@ -3929,11 +3929,6 @@ PAGES.profile = async () => {
 
 function profileRender(d) {
   const u = d.user || {}, w = d.wallet || {}, ck = d.checkin || {};
-  const groups = d.groups || [];
-
-  const groupHtml = groups.length
-    ? groups.map((g) => '<span class="tag">' + esc(g.name) + '</span>').join(' ')
-    : '<span class="muted">未加入任何分组</span>';
 
   const recent = (ck.recent || []).length
     ? (ck.recent || []).map((r) => '<span class="tag">' + esc(r.day) + ' · +' + fmtUsd(r.amount) + '</span>').join(' ')
@@ -3975,7 +3970,6 @@ function profileRender(d) {
         row2('角色', esc(u.role_name || u.role || '-')) +
         row2('状态', String(u.status) === 'active'
           ? '<span class="tag ok">正常</span>' : '<span class="tag err">' + esc(u.status) + '</span>') +
-        row2('所属分组', groupHtml) +
         row2('注册时间', fmtTime(u.created_at)) +
         row2('最近登录', fmtTime(u.last_login_at)) +
         (u.notes ? row2('备注', esc(u.notes)) : '') +
