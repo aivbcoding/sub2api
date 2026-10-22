@@ -1333,33 +1333,116 @@ function fmtTimeBj(s) {
   return v === '-' ? '-' : v + ' (UTC+8)';
 }
 
-// 复制到剪贴板。优先用 Clipboard API, 非 HTTPS / 老浏览器回退到 execCommand
+// 复制到剪贴板。三级降级, 任何一步失败都往下走, 而不是直接报错放弃:
+//   ① Clipboard API(HTTPS + 现代浏览器)
+//   ② execCommand('copy') —— textarea 兜底(老浏览器 / 非安全上下文)
+//   ③ 再兜一层: 选中文本让用户自己 Ctrl+C
+// ⚠️ 2026-10-22 老板反馈「可用模型」的复制点了没成功: 当时 ① 抛错(权限/窗口失焦)
+//    就直接 toast 失败, 没有降级到 ② —— 已补齐。
 async function copyText(text, okMsg = '已复制到剪贴板') {
+  const val = String(text == null ? '' : text);
+
+  // ① Clipboard API
+  // 🚨 关键: writeText() 有可能**永远不返回**(窗口没焦点/权限被策略挂起时既不 resolve 也不 reject),
+  //    直接 await 会把整条复制卡死 —— 表现就是"点了没反应、没提示、也没复制"。
+  //    所以: (a) 页面失焦(hasFocus=false)时直接跳过 ① —— Clipboard API 要求文档有焦点;
+  //        (b) 就算有焦点也加 1.2s 超时, 超时当失败降级到 ②。
   try {
-    if (navigator.clipboard && window.isSecureContext) {
-      await navigator.clipboard.writeText(text);
+    const focused = (typeof document.hasFocus === 'function') ? document.hasFocus() : true;
+    if (navigator.clipboard && window.isSecureContext && focused) {
+      await Promise.race([
+        navigator.clipboard.writeText(val),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('clipboard timeout')), 1200)),
+      ]);
       toast(okMsg);
       return true;
     }
-    const ta = document.createElement('textarea');
-    ta.value = text;
+  } catch (e) {
+    // 不在这里报错 —— 继续往下走 ②
+  }
+
+  // ② execCommand 兜底
+  let ta = null;
+  try {
+    ta = document.createElement('textarea');
+    ta.value = val;
+    ta.setAttribute('readonly', 'readonly');
+    // 不能用 display:none / visibility:hidden —— 不可见元素选不中, 老 Safari 直接失败
     ta.style.position = 'fixed';
+    ta.style.top = '0';
+    ta.style.left = '0';
+    ta.style.width = '1px';
+    ta.style.height = '1px';
+    ta.style.padding = '0';
+    ta.style.border = 'none';
+    ta.style.outline = 'none';
+    ta.style.boxShadow = 'none';
+    ta.style.background = 'transparent';
     ta.style.opacity = '0';
     document.body.appendChild(ta);
+    ta.focus({ preventScroll: true });
     ta.select();
+    if (ta.setSelectionRange) ta.setSelectionRange(0, val.length);
     const ok = document.execCommand('copy');
-    ta.remove();
-    toast(ok ? okMsg : '复制失败, 请手动选中复制', ok ? 'ok' : 'err');
-    return ok;
+    if (ok) {
+      toast(okMsg);
+      return true;
+    }
   } catch (e) {
-    toast('复制失败: ' + e.message, 'err');
-    return false;
+    // 继续 ③
+  } finally {
+    if (ta && ta.parentNode) ta.parentNode.removeChild(ta);
   }
+
+  // ③ 最后: 把内容选中, 提示用户手动 Ctrl+C
+  try {
+    const sel = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(document.body);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  } catch (e) { /* 选不中也别再抛 */ }
+  toast('复制失败, 已选中页面内容, 请按 Ctrl+C 手动复制', 'err');
+  return false;
 }
 
 function closeModal() { $('#overlay').classList.add('hidden'); $('#modal').className = 'modal'; $('#modal').innerHTML = ''; }
 $('#overlay').addEventListener('click', (e) => { if (e.target.id === 'overlay') closeModal(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+
+/**
+ * 模型 ID 行内「复制」按钮 —— **事件委托**, 全局只绑一次。
+ * 为什么不用逐按钮 addEventListener: 弹窗内容是后渲染的, 逐个绑定容易因为
+ * 渲染时机/二次渲染而漏绑(实测踩过: 按钮在 DOM 里但点了没反应)。
+ * 委托只认 target.closest('[data-copy-model]'), 元素什么时候渲染都不影响。
+ */
+document.addEventListener('click', async (e) => {
+  const t = e.target;
+  if (!t || !t.closest) return;
+  const btn = t.closest('[data-copy-model]');
+  if (!btn) return;
+  const id = btn.getAttribute('data-copy-model') || '';
+  const ok = await copyText(id, '模型 ID 已复制');
+  if (ok) {
+    // 可见反馈: 按钮短暂变成「已复制」, 用户才敢直接去别处粘贴
+    const old = btn.textContent;
+    btn.textContent = '已复制';
+    setTimeout(() => { btn.textContent = old; }, 1500);
+  } else {
+    // 兜底: 单元格内塞一个已选中的输入框, 长按或 Ctrl+C 都能复制(移动端友好)
+    const cell = btn.parentNode;
+    if (cell && !cell.querySelector('input')) {
+      const inp = document.createElement('input');
+      inp.className = 'mono';
+      inp.value = id;
+      inp.style.width = '100%';
+      inp.style.marginTop = '6px';
+      cell.appendChild(inp);
+      inp.focus();
+      inp.select();
+    }
+  }
+});
 
 /**
  * 打开弹窗。
@@ -4247,10 +4330,14 @@ async function fetchModelsWithKey(key) {
   const cp = $('#fm-copy');
   // 🚨 这里必须写 \\n: 本函数在 ADMIN_HTML 模板字面量里, 单反斜杠的 \n 会被
   // 模板层先吃掉变成真实换行, 页面 JS 就成了 ids.join(' 换行 ') 直接 SyntaxError(2026-10-22 踩)
-  if (cp) cp.addEventListener('click', () => copyText(ids.join('\\n'), '模型列表已复制'));
-  document.querySelectorAll('[data-copy-model]').forEach((el) => {
-    el.addEventListener('click', () => copyText(el.dataset.copyModel, '模型 ID 已复制'));
+  if (cp) cp.addEventListener('click', async () => {
+    const ok = await copyText(ids.join('\\n'), '模型列表已复制');
+    const old = cp.textContent;
+    cp.textContent = ok ? '已复制' : '复制失败';
+    setTimeout(() => { cp.textContent = old; }, 1500);
   });
+  // 行内「复制」按钮走**全局事件委托**(见下方 document 级监听), 这里不再逐个绑定 ——
+  // 委托只绑一次, 不受"渲染时机/重渲染丢绑定"影响, 也不会重复触发。
 }
 
 function newMyKey() {
