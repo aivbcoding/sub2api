@@ -188,7 +188,6 @@ export async function authenticate(
     userRole: String(row.user_role ?? 'user'),
     userBalance: Number(row.user_balance ?? 0),
     userStatus,
-    userConcurrency: Number(row.user_concurrency ?? 5),
     userPlatformAccess: String(row.user_platform_access ?? ''),
     groupId: row.group_effective_id === null || row.group_effective_id === undefined
       ? null

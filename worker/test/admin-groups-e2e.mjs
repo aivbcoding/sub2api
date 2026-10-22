@@ -8,7 +8,7 @@
  *   2. GET /api/admin/groups/:id/accounts  → 存活账号清单 + 失效绑定清单
  *   3. PUT /api/admin/groups/:id/accounts  → 整体替换绑定, 顺带清理失效绑定
  *   4. GET /api/admin/api-keys?user_id=N   → 按用户过滤
- *   5. POST/PUT/DELETE /api/admin/users    → rpm_limit / platform_access 落库
+ *   5. POST/PUT/DELETE /api/admin/users    → platform_access 落库
  *
  * 前置:
  *   本地 admin_accounts 里有一条已知密码的管理员账号 (可用
@@ -192,8 +192,8 @@ async function main() {
   check('不存在的用户 -> 空列表', nokeys.status === 200 && (nokeys.json.api_keys ?? []).length === 0,
     JSON.stringify(nokeys.json).slice(0, 160));
 
-  // ---- [9] 用户 CRUD: rpm_limit / platform_access ----
-  console.log('\n[9] 用户增改删 (rpm_limit / platform_access)');
+  // ---- [9] 用户 CRUD: platform_access ----
+  console.log('\n[9] 用户增改删 (platform_access)');
   const email = `e2e-groups-${Date.now()}@local`;
   const created = await call('/api/admin/users', {
     method: 'POST',
@@ -203,8 +203,6 @@ async function main() {
       role: 'user',
       status: 'active',
       balance: 1.5,
-      concurrency: 4,
-      rpm_limit: 7,
       platform_access: 'openai,sensenova',
       notes: '由 admin-groups-e2e 自动创建',
     }),
@@ -215,19 +213,19 @@ async function main() {
   const list2 = await call('/api/admin/users');
   const u2 = (list2.json.users ?? []).find((u) => u.id === uid) ?? {};
   check('新用户出现在列表中', !!u2.id, email);
-  check('rpm_limit 落库', u2.rpm_limit === 7, `rpm_limit=${u2.rpm_limit}`);
+  // users.rpm_limit 已于 2026-10-22 删除(死字段, 网关从不读) —— 夹带也不该落库/下发
+  check('已废弃的 rpm_limit 不再下发', u2.rpm_limit === undefined, `rpm_limit=${u2.rpm_limit}`);
   check('platform_access 落库', u2.platform_access === 'openai,sensenova', `platform_access=${u2.platform_access}`);
   check('余额换算正确', Math.abs(Number(u2.balance) - 1.5) < 1e-6, `balance=${u2.balance}`);
   check('key_count 初始为 0', u2.key_count === 0, `key_count=${u2.key_count}`);
 
   const upd = await call(`/api/admin/users/${uid}`, {
     method: 'PUT',
-    body: JSON.stringify({ rpm_limit: 0, status: 'disabled', platform_access: 'gemini' }),
+    body: JSON.stringify({ status: 'disabled', platform_access: 'gemini' }),
   });
   check('更新用户返回 200', upd.status === 200, upd.text.slice(0, 160));
   const list3 = await call('/api/admin/users');
   const u3 = (list3.json.users ?? []).find((u) => u.id === uid) ?? {};
-  check('rpm_limit 已更新为 0', u3.rpm_limit === 0, `rpm_limit=${u3.rpm_limit}`);
   check('status 已更新为 disabled', u3.status === 'disabled', `status=${u3.status}`);
   check('platform_access 已更新', u3.platform_access === 'gemini', `platform_access=${u3.platform_access}`);
 

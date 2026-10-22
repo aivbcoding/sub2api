@@ -39,7 +39,6 @@ export interface AuthContext {
   userRole: string;
   userBalance: number;
   userStatus: string;
-  userConcurrency: number;
   /** 允许访问的上游平台, 逗号分隔; 空字符串 = 不限制 */
   userPlatformAccess: string;
   groupId: number | null;

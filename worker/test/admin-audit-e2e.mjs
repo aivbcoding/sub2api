@@ -79,7 +79,6 @@ async function main() {
         role: 'user',
         status: 'active',
         balance: 0,
-        concurrency: 1,
       }),
     });
     if (r.status === 201 && r.json.id) madeIds.push(r.json.id);

@@ -694,7 +694,7 @@ async function getProfile(env: Env, auth: AdminAuthResult, req: Request): Promis
   const [userRow, wallet, days, groups] = await Promise.all([
     env.DB.prepare(
       `SELECT id, username, email, role, status, balance, frozen_balance,
-              concurrency, rpm_limit, notes, created_at, last_login_at
+              notes, created_at, last_login_at
          FROM users WHERE id = ?1 AND deleted_at IS NULL`,
     )
       .bind(me.id)
@@ -741,8 +741,6 @@ async function getProfile(env: Env, auth: AdminAuthResult, req: Request): Promis
       role: me.role,
       role_name: me.role_name,
       status: String(userRow?.status ?? ''),
-      concurrency: Number(userRow?.concurrency ?? 0),
-      rpm_limit: Number(userRow?.rpm_limit ?? 0),
       notes: String(userRow?.notes ?? ''),
       created_at: userRow?.created_at ?? null,
       last_login_at: userRow?.last_login_at ?? null,
@@ -1141,16 +1139,14 @@ async function handleUsers(
     const passwordHash = await hashPassword(pwd || DEFAULT_USER_PASSWORD);
 
     const res = await env.DB.prepare(
-      `INSERT INTO users (email, password_hash, role, balance, concurrency, rpm_limit, status, username, notes, platform_access)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`,
+      `INSERT INTO users (email, password_hash, role, balance, status, username, notes, platform_access)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
     )
       .bind(
         email,
         passwordHash,
         wantRole,
         toMicro(body.balance ?? 0),
-        Number(body.concurrency ?? 5),
-        Number(body.rpm_limit ?? 0),
         String(body.status ?? 'active'),
         String(body.username ?? ''),
         String(body.notes ?? ''),
@@ -1191,8 +1187,6 @@ async function handleUsers(
       status: (v) => String(v),
       username: (v) => String(v),
       notes: (v) => String(v),
-      concurrency: (v) => Number(v),
-      rpm_limit: (v) => Number(v),
       balance: (v) => toMicro(v),
       frozen_balance: (v) => toMicro(v),
       platform_access: (v) =>
@@ -1369,8 +1363,6 @@ function serializeUser(row: Record<string, unknown>) {
     role: row.role,
     balance: fromMicro(row.balance),
     frozen_balance: fromMicro(row.frozen_balance),
-    concurrency: row.concurrency,
-    rpm_limit: row.rpm_limit,
     status: row.status,
     username: row.username,
     notes: row.notes,
@@ -3801,8 +3793,8 @@ export async function handleRegister(
   // balance 早已在开头被整体丢弃 —— 想多送只能改这里的常量。
   const bonus = toMicro(REGISTER_BONUS_USD);
   const res = await env.DB.prepare(
-    `INSERT INTO users (email, password_hash, role, balance, concurrency, rpm_limit, status, username, notes, platform_access)
-     VALUES (?1, ?2, 'user', ?3, 5, 0, ?4, ?5, '', '')`,
+    `INSERT INTO users (email, password_hash, role, balance, status, username, notes, platform_access)
+     VALUES (?1, ?2, 'user', ?3, ?4, ?5, '', '')`,
   )
     .bind(email, hash, bonus, autoApprove ? 'active' : 'disabled', username || email)
     .run();

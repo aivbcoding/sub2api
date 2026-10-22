@@ -19,7 +19,14 @@ CREATE TABLE IF NOT EXISTS users (
   role              TEXT    NOT NULL DEFAULT 'user',      -- admin | user
   balance           INTEGER NOT NULL DEFAULT 0,           -- 微美元
   frozen_balance    INTEGER NOT NULL DEFAULT 0,           -- 微美元(批量生图 hold)
+  -- 已废弃(2026-10-22 删 UI/接口/上下文字段): 原意想限制"每用户同时几个请求",
+  -- 但网关链路从来没人读它 —— 真正生效的并发控制是 accounts.concurrency /
+  -- load_factor(scheduler.ts 取槽)。列保留只为兼容 v_api_key_auth 视图和存量数据,
+  -- 新代码不要再读写它。
   concurrency       INTEGER NOT NULL DEFAULT 5,
+  -- 已废弃(2026-10-22 删 UI/接口): 原意想限制"每用户每分钟请求数", 但网关链路
+  -- 从来没人读它 —— users.rpm_limit 连进鉴权上下文都没有(只读了 group_rpm_limit,
+  -- 而那个也没有消费点)。列保留只为兼容存量数据, 新代码不要再读写。
   rpm_limit         INTEGER NOT NULL DEFAULT 0,           -- 0=不限
   status            TEXT    NOT NULL DEFAULT 'active',    -- active | disabled | error
   username          TEXT    NOT NULL DEFAULT '',

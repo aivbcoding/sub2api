@@ -3110,7 +3110,6 @@ PAGES.users = async () => {
         '<td>' + role + '</td>' +
         '<td>' + pw + '</td>' +
         '<td>' + fmtMoney(u.balance) + '</td>' +
-        '<td>' + u.concurrency + '</td>' +
         '<td><button class="btn sm" data-user-keys="' + u.id + '" title="查看该用户下的 API Key">' + u.key_count + '</button></td>' +
         '<td>' + access + '</td>' +
         '<td class="muted" title="' + esc(fmtTimeBj(u.created_at)) + '">' + fmtTime(u.created_at) + '</td>' +
@@ -3134,7 +3133,7 @@ PAGES.users = async () => {
         : '') +
       '<button class="btn primary" id="btn-new-user">新建用户</button></div></div>' +
     '<div class="panel"><div class="table-wrap"><table><thead><tr>' +
-      '<th>ID</th><th>邮箱</th><th>用户名</th><th>角色</th><th>密码</th><th>余额</th><th>并发</th><th>Key</th>' +
+      '<th>ID</th><th>邮箱</th><th>用户名</th><th>角色</th><th>密码</th><th>余额</th><th>Key</th>' +
       '<th>平台白名单</th><th>创建时间 (UTC+8)</th><th>最近登录 (UTC+8)</th><th>状态</th><th class="ops-sticky">操作</th>' +
     '</tr></thead><tbody>' + rows + '</tbody></table></div></div>' +
     (noPwd
@@ -3268,12 +3267,7 @@ function userForm(u, d) {
         '编辑时留空表示不改。' +
       '</div>' +
     '</div>' +
-    '<div class="grid2">' +
-      '<div class="form-row"><label>余额 (USD)</label><input id="u-bal" type="number" step="0.01" value="' + (isEdit ? u.balance : 0) + '"></div>' +
-      '<div class="form-row"><label>并发上限</label><input id="u-conc" type="number" value="' + (isEdit ? u.concurrency : 5) + '"></div>' +
-    '</div>' +
-    '<div class="form-row"><label>RPM 限制 <span class="muted">(0 = 不限)</span></label>' +
-      '<input id="u-rpm" type="number" value="' + (isEdit ? (u.rpm_limit || 0) : 0) + '"></div>' +
+    '<div class="form-row"><label>余额 (USD)</label><input id="u-bal" type="number" step="0.01" value="' + (isEdit ? u.balance : 0) + '"></div>' +
     '<div class="form-row"><label>平台白名单 <span class="muted">(逗号分隔; 留空 = 不限制)</span></label>' +
       '<input id="u-access" class="mono" value="' + esc(isEdit ? (u.platform_access || '') : '') + '" placeholder="例如: openai,sensenova">' +
       '<div class="muted" style="font-size:12px;margin-top:4px">' +
@@ -3304,8 +3298,6 @@ function userForm(u, d) {
       role: $('#u-role').value,
       status: $('#u-status').value,
       balance: Number($('#u-bal').value || 0),
-      concurrency: Number($('#u-conc').value || 5),
-      rpm_limit: Number($('#u-rpm').value || 0),
       platform_access: $('#u-access').value.trim(),
       notes: $('#u-notes').value.trim(),
       password: pwd,

@@ -123,9 +123,11 @@ try {
   ok(html.indexOf('function groupAccountsForm') >= 0, '含分组↔账号绑定管理弹窗');
   ok(html.indexOf('g-acct') >= 0, '绑定弹窗有账号勾选框');
 
-  // ---- 用户管理: 平台白名单 / RPM / 名下 Key ----
+  // ---- 用户管理: 平台白名单 / 名下 Key ----
   ok(html.indexOf('id="u-access"') >= 0, '用户表单有「平台白名单」输入框');
-  ok(html.indexOf('id="u-rpm"') >= 0, '用户表单有「RPM 限制」输入框');
+  // users.rpm_limit / users.concurrency 已于 2026-10-22 删除(死字段, 网关链路从不读)
+  ok(html.indexOf('id="u-rpm"') === -1, '用户表单已无「RPM 限制」输入框(废弃字段已删)');
+  ok(html.indexOf('id="u-conc"') === -1, '用户表单已无「并发上限」输入框(废弃字段已删)');
   ok(html.indexOf('data-user-keys') >= 0, '用户列表的 Key 数可点开查看名下 Key');
   ok(html.indexOf('data-toggle-user') >= 0, '用户列表支持一键启用/停用');
 
