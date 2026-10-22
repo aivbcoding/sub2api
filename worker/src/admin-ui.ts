@@ -474,7 +474,6 @@ const ADMIN_HTML = `<!DOCTYPE html>
      表格列撑大, 整列所有行、所有按钮一起偏移(老板 2026-10-22 反馈)。
      所以宽度写死, 成功态只用颜色表达, 零布局变化。 */
   .fm-list tbody [data-copy-model] { width: 56px; min-width: 56px; justify-content: center; }
-  .btn.copied { background: #16a34a; border-color: #16a34a; color: #fff; }
   .ci-blue { background: #3b82f6; } .ci-cyan { background: #06b6d4; }
   .ci-green { background: #22c55e; } .ci-yellow { background: #eab308; }
   .ci-pink { background: #ec4899; } .ci-purple { background: #8b5cf6; }
@@ -936,11 +935,6 @@ const ADMIN_HTML = `<!DOCTYPE html>
   .ov-2col > .panel { height: 100%; display: flex; flex-direction: column; }
   .ov-2col > .panel > .panel-body { flex: 1 1 auto; }
   .tool-row { display: flex; align-items: center; gap: 10px; }
-  .tool-badge {
-    flex: 0 0 auto; width: 36px; height: 36px; border-radius: 50%;
-    background: #3b82f6; color: #fff; font-size: 11px; line-height: 1;
-    display: inline-flex; align-items: center; justify-content: center;
-  }
   .tool-main { flex: 1 1 auto; min-width: 0; }
   .tool-head { font-weight: 600; font-size: 13.5px; }
   .tool-head .muted { font-weight: 400; margin-left: 6px; }
@@ -1087,53 +1081,6 @@ const ADMIN_HTML = `<!DOCTYPE html>
     .doc-main { height: auto; overflow: visible; padding: 16px 15px 20px; }
   }
 
-  /* ============================================================
-     侧边栏折叠(只留图标, 类似 ElementUI 折叠菜单)
-     ⚠️ 这段**必须放在所有 .nav-item / .nav-group 规则之后**:
-        静态守卫用 html.indexOf('.nav-group {') / indexOf('.nav-item {') 取**第一个**匹配
-        再往后截 400 字符做断言 —— 折叠块里同样含这两个选择器, 放前面会把守卫的
-        匹配抢走, 导致「分组标题加粗」「窄屏胶囊」等断言假红。
-     菜单文字是紧跟 data-page 的裸文本(守卫要求, 不能包 <span>), 所以折叠时
-     用 font-size:0 把文字宽度归零; ::before 的图标有自己的 font-size, 不受影响。
-     ============================================================ */
-  /* ⚠️ min-width 必须显式给: .sidebar 是 .layout(display:flex) 的子项, flex item 的
-     min-width:auto = 内容的 min-content 宽度, 会把 width:62px 顶回去(连 !important 都不管用) */
-  .sidebar { transition: width .18s ease; min-width: 0; }
-  body.nav-collapsed .sidebar { width: 62px; min-width: 62px; }
-  body.nav-collapsed .nav-group {
-    font-size: 0; height: 1px; overflow: hidden;
-    padding: 12px 0 0; margin: 8px 0 0;
-  }
-  body.nav-collapsed .nav-item {
-    justify-content: center; gap: 0; padding: 10px 0; font-size: 0;
-  }
-  body.nav-collapsed .nav-item::before { font-size: 17px; }
-
-  /* 顶栏的折叠开关 */
-  .nav-toggle {
-    align-self: center; flex: 0 0 auto;
-    width: 30px; height: 30px; border-radius: 7px;
-    display: inline-flex; align-items: center; justify-content: center;
-    background: none; border: 1px solid transparent; cursor: pointer;
-    color: #4b5563; font-size: 15px; line-height: 1;
-    transition: background .14s, color .14s, border-color .14s;
-  }
-  .nav-toggle::before { content: '\u2630'; display: inline-block; transition: transform .18s ease; }
-  .nav-toggle:hover { background: #f3f4f6; color: var(--text); border-color: var(--border); }
-  body.nav-collapsed .nav-toggle::before { transform: rotate(90deg); }
-
-  /* 窄屏: 侧栏本来就是横向条, 折叠无意义 —— 还原成展开态, 并隐藏开关 */
-  @media (max-width: 720px) {
-    .nav-toggle { display: none; }
-    body.nav-collapsed .sidebar { width: 100%; }
-    body.nav-collapsed .nav-item {
-      font-size: 13px; padding: 7px 11px; justify-content: flex-start; gap: 9px;
-    }
-    body.nav-collapsed .nav-group {
-      font-size: 12px; height: 26px; overflow: visible;
-      padding: 0 10px 0 6px; margin: 0;
-    }
-  }
 </style>
 </head>
 <body>
@@ -1242,7 +1189,6 @@ const ADMIN_HTML = `<!DOCTYPE html>
 <div id="app-view">
   <header class="topbar">
     <div class="brand">
-      <button class="nav-toggle" id="btn-nav-toggle" title="折叠 / 展开侧边栏" aria-pressed="false"></button>
       <span class="logo">S</span>
       <span>sub2api</span>
       <small>Workers 版控制台</small>
@@ -1507,12 +1453,10 @@ document.addEventListener('click', async (e) => {
   const btn = t.closest('[data-copy-model]');
   if (!btn) return;
   const id = btn.getAttribute('data-copy-model') || '';
+  // 只用 toast 提示成功, **不改按钮颜色也不改文字** —— 改颜色/文字都会让用户
+  // 误以为状态变了, 而且改文字会撑宽按钮导致整列偏移(老板 2026-10-22 反馈)。
   const ok = await copyText(id, '模型 ID 已复制');
-  if (ok) {
-    // 只切颜色, **不改文字** —— 改文字会撑宽按钮/列, 导致整列偏移
-    btn.classList.add('copied');
-    setTimeout(() => { btn.classList.remove('copied'); }, 1600);
-  } else {
+  if (!ok) {
     // 兜底: 单元格内塞一个已选中的输入框, 长按或 Ctrl+C 都能复制(移动端友好)
     const cell = btn.parentNode;
     if (cell && !cell.querySelector('input')) {
@@ -1631,29 +1575,7 @@ function showApp() {
   $('#register-view').style.display = 'none';
   // flex —— #app-view 是「顶栏 + 下方左右两栏」的纵向布局, 用 block 会塌掉高度
   $('#app-view').style.display = 'flex';
-  // 恢复上次的选择: 侧边栏折叠状态
-  let saved = false;
-  try { saved = localStorage.getItem(NAV_COLLAPSE_KEY) === '1'; } catch (e) { saved = false; }
-  applyNavCollapsed(saved);
 }
-
-/* ---- 侧边栏折叠(只留图标) ---- */
-const NAV_COLLAPSE_KEY = 'sub2api.navCollapsed';
-function applyNavCollapsed(on) {
-  document.body.classList.toggle('nav-collapsed', !!on);
-  const b = $('#btn-nav-toggle');
-  if (b) b.setAttribute('aria-pressed', on ? '1' : '0');
-  // 折叠后只剩图标, 补 title 让鼠标悬停能看到菜单名; 展开时移除
-  document.querySelectorAll('.nav-item').forEach((el) => {
-    if (on) el.setAttribute('title', el.textContent.trim());
-    else el.removeAttribute('title');
-  });
-}
-$('#btn-nav-toggle').addEventListener('click', () => {
-  const on = !document.body.classList.contains('nav-collapsed');
-  try { localStorage.setItem(NAV_COLLAPSE_KEY, on ? '1' : '0'); } catch (e) { /* 隐私模式忽略 */ }
-  applyNavCollapsed(on);
-});
 
 /** 登录页顶部的提示横幅(注册成功跳回来时用它说明"下一步做什么") */
 function loginBanner(msg, type) {
@@ -3847,7 +3769,6 @@ function overviewRender(d) {
     '<div class="panel"><div class="panel-title">工具类</div>' +
       '<div class="panel-body">' +
         '<div class="tool-row">' +
-          '<span class="tool-badge">工具</span>' +
           '<div class="tool-main">' +
             '<div class="tool-head">默认 API<span class="muted">' + esc(origin) + '</span></div>' +
             '<div class="tool-links">' +
@@ -4462,10 +4383,8 @@ async function fetchModelsWithKey(key) {
   // 🚨 这里必须写 \\n: 本函数在 ADMIN_HTML 模板字面量里, 单反斜杠的 \n 会被
   // 模板层先吃掉变成真实换行, 页面 JS 就成了 ids.join(' 换行 ') 直接 SyntaxError(2026-10-22 踩)
   if (cp) cp.addEventListener('click', async () => {
-    const ok = await copyText(ids.join('\\n'), '模型列表已复制');
-    // 同样只切颜色不改文字, 免得底部按钮区跟着位移
-    cp.classList.toggle('copied', !!ok);
-    setTimeout(() => { cp.classList.remove('copied'); }, 1600);
+    // 同样只弹 toast, 不改按钮颜色/文字
+    await copyText(ids.join('\\n'), '模型列表已复制');
   });
   // 行内「复制」按钮走**全局事件委托**(见下方 document 级监听), 这里不再逐个绑定 ——
   // 委托只绑一次, 不受"渲染时机/重渲染丢绑定"影响, 也不会重复触发。
