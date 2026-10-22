@@ -4030,7 +4030,6 @@ PAGES.mykeys = async () => {
  * 它是这个页面的必要上下文, 不是"额外信息"。
  */
 function myKeysRender(d) {
-  const g = d.default_group;
   const maxKeys = d.max_keys || 20;
   const ks = d.api_keys || [];
 
@@ -4056,9 +4055,6 @@ function myKeysRender(d) {
         '<th>Key</th><th>名称</th><th>分组</th><th>状态</th><th>已用额度</th>' +
         '<th>最近使用 (UTC+8)</th><th>操作</th>' +
       '</tr></thead><tbody>' + keyRows + '</tbody></table></div>' +
-      '<div class="panel-body"><p class="hint">新建的 Key 会挂到默认分组 <strong>' +
-        (g ? esc(g.name) : '<span style="color:var(--danger)">(没有可用分组, 请联系管理员)</span>') +
-        '</strong>, 并立刻继承该分组的路由配置。明文只在创建时显示一次, 请立刻保存。</p></div>' +
     '</div>' +
 
     '<div class="panel"><div class="panel-title">怎么调用</div>' +
@@ -4068,6 +4064,7 @@ function myKeysRender(d) {
         '<div class="panel-actions">' +
           '<button class="btn" id="btn-copy-base">复制接口地址</button>' +
           '<button class="btn" id="btn-copy-sample">复制 curl 示例</button>' +
+          '<button class="btn" id="btn-fetch-models">获取模型</button>' +
         '</div>' +
         '<p class="hint">把接口地址填进任意 OpenAI 兼容客户端, API Key 用刚创建的那把 —— ' +
           '明文只在创建时显示一次, 请立刻保存。余额不足时接口返回 <code>INSUFFICIENT_BALANCE</code>。' +
@@ -4083,12 +4080,91 @@ function myKeysRender(d) {
     el.addEventListener('click', () => delMyKey(Number(el.dataset.delMykey)));
   });
   $('#btn-copy-base').addEventListener('click', () => copyText(location.origin, '接口地址已复制'));
+  $('#btn-fetch-models').addEventListener('click', () => pickKeyAndFetchModels(ks));
   $('#btn-copy-sample').addEventListener('click', () => {
     const sample = 'curl ' + location.origin + '/v1/chat/completions' +
       ' -H "Authorization: Bearer <你的KEY>" -H "Content-Type: application/json"' +
       ' -d "{\\"model\\":\\"<模型名>\\",\\"messages\\":[{\\"role\\":\\"user\\",\\"content\\":\\"hi\\"}]}"';
     copyText(sample, 'curl 示例已复制');
   });
+}
+
+/**
+ * 「获取模型」入口: 用一把 Key 调网关自己的 GET /v1/models, 把可用模型弹窗列出来。
+ *
+ * 为什么前端直接调(不过后端加接口):
+ *   api_keys.key 就是**明文存储**(见 schema/schema.sql 注释), /my/keys 已把明文回给前端,
+ *   所以拿 Bearer 直接打自己的 /v1/models 即可 —— 不新增接口、不经后端转发, Key 也不会
+ *   打到任何第三方。/v1/models 无 store, 每次都实时算(分组白名单 + 各上游聚合)。
+ */
+function pickKeyAndFetchModels(ks) {
+  const act = (ks || []).filter((k) => k.status === 'active');
+  if (!act.length) { toast('没有状态为 active 的 Key, 请先新建 Key', 'err'); return; }
+  if (act.length === 1) { fetchModelsWithKey(act[0].key); return; }
+  openModal('选择要查询的 Key',
+    '<p class="hint">你有 ' + act.length + ' 把可用 Key, 选一把查看它能用的模型:</p>' +
+    '<div class="table-wrap" style="max-height:360px"><table><thead><tr>' +
+      '<th>Key</th><th>名称</th><th>分组</th><th>操作</th>' +
+    '</tr></thead><tbody>' +
+    act.map((k) =>
+      '<tr>' +
+        '<td class="mono" style="max-width:260px;overflow:hidden;text-overflow:ellipsis">' + esc(k.key) + '</td>' +
+        '<td>' + esc(k.name || '-') + '</td>' +
+        '<td>' + esc(k.group_name || '-') + '</td>' +
+        '<td><button class="btn sm" data-pickkey="' + esc(k.key) + '">获取模型</button></td>' +
+      '</tr>').join('') +
+    '</tbody></table></div>',
+    '<button class="btn" id="fm-cancel">取消</button>');
+  $('#fm-cancel').addEventListener('click', closeModal);
+  document.querySelectorAll('[data-pickkey]').forEach((el) => {
+    el.addEventListener('click', () => fetchModelsWithKey(el.dataset.pickkey));
+  });
+}
+
+async function fetchModelsWithKey(key) {
+  openModal('获取模型', '<p class="hint">正在用该 Key 获取模型列表…</p>',
+    '<button class="btn" id="fm-busy">取消</button>');
+  $('#fm-busy').addEventListener('click', closeModal);
+
+  let ids = [];
+  let errMsg = '';
+  try {
+    const r = await fetch(location.origin + '/v1/models', {
+      headers: { 'Authorization': 'Bearer ' + key },
+    });
+    const j = await r.json().catch(() => null);
+    if (!r.ok) {
+      errMsg = (j && j.error && (j.error.message || j.error.type)) || ('HTTP ' + r.status);
+    } else {
+      ids = ((j && j.data) || []).map((m) => (typeof m === 'string' ? m : (m && m.id) || '')).filter(Boolean);
+    }
+  } catch (e) {
+    errMsg = (e && e.message) || '网络异常';
+  }
+
+  if (errMsg) {
+    openModal('获取模型失败',
+      '<p class="hint" style="color:var(--danger)">' + esc(String(errMsg)) + '</p>' +
+      '<p class="hint">常见原因: Key 被停用 / 余额不足(INSUFFICIENT_BALANCE) / 所在分组没配置任何模型。</p>',
+      '<button class="btn" id="fm-err-close">关闭</button>');
+    $('#fm-err-close').addEventListener('click', closeModal);
+    return;
+  }
+
+  ids.sort();
+  const body = ids.length
+    ? '<p class="hint">共 ' + ids.length + ' 个可用模型:</p>' +
+      '<div class="table-wrap" style="max-height:420px"><table><thead><tr><th>模型 ID</th></tr></thead><tbody>' +
+      ids.map((id) => '<tr><td class="mono">' + esc(id) + '</td></tr>').join('') +
+      '</tbody></table></div>'
+    : '<div class="empty">该 Key 暂时没有可用模型 —— 请确认 Key 状态正常、所在分组已配置模型。</div>';
+  openModal('可用模型 (' + ids.length + ')', body,
+    '<button class="btn" id="fm-close">关闭</button><button class="btn primary" id="fm-copy">复制全部</button>');
+  $('#fm-close').addEventListener('click', closeModal);
+  const cp = $('#fm-copy');
+  // 🚨 这里必须写 \\n: 本函数在 ADMIN_HTML 模板字面量里, 单反斜杠的 \n 会被
+  // 模板层先吃掉变成真实换行, 页面 JS 就成了 ids.join(' 换行 ') 直接 SyntaxError(2026-10-22 踩)
+  if (cp) cp.addEventListener('click', () => copyText(ids.join('\\n'), '模型列表已复制'));
 }
 
 function newMyKey() {
