@@ -469,6 +469,11 @@ const ADMIN_HTML = `<!DOCTYPE html>
   .card-ico .k2 span { color: var(--muted); font-size: 12px; white-space: nowrap; }
   /* 值整体不折行: 窄卡片里让它换到下一行, 而不是把数字本身断成几段 */
   .card-ico .k2 b { font-size: 15px; font-weight: 700; letter-spacing: -.01em; white-space: nowrap; }
+  /* 复制按钮: **固定宽度** —— 成功态如果把文字从「复制」改成「已复制」, 文字变宽会把
+     表格列撑大, 整列所有行、所有按钮一起偏移(老板 2026-10-22 反馈)。
+     所以宽度写死, 成功态只用颜色表达, 零布局变化。 */
+  .fm-list tbody [data-copy-model] { width: 56px; min-width: 56px; justify-content: center; }
+  .btn.copied { background: #16a34a; border-color: #16a34a; color: #fff; }
   .ci-blue { background: #3b82f6; } .ci-cyan { background: #06b6d4; }
   .ci-green { background: #22c55e; } .ci-yellow { background: #eab308; }
   .ci-pink { background: #ec4899; } .ci-purple { background: #8b5cf6; }
@@ -1424,10 +1429,9 @@ document.addEventListener('click', async (e) => {
   const id = btn.getAttribute('data-copy-model') || '';
   const ok = await copyText(id, '模型 ID 已复制');
   if (ok) {
-    // 可见反馈: 按钮短暂变成「已复制」, 用户才敢直接去别处粘贴
-    const old = btn.textContent;
-    btn.textContent = '已复制';
-    setTimeout(() => { btn.textContent = old; }, 1500);
+    // 只切颜色, **不改文字** —— 改文字会撑宽按钮/列, 导致整列偏移
+    btn.classList.add('copied');
+    setTimeout(() => { btn.classList.remove('copied'); }, 1600);
   } else {
     // 兜底: 单元格内塞一个已选中的输入框, 长按或 Ctrl+C 都能复制(移动端友好)
     const cell = btn.parentNode;
@@ -4332,9 +4336,9 @@ async function fetchModelsWithKey(key) {
   // 模板层先吃掉变成真实换行, 页面 JS 就成了 ids.join(' 换行 ') 直接 SyntaxError(2026-10-22 踩)
   if (cp) cp.addEventListener('click', async () => {
     const ok = await copyText(ids.join('\\n'), '模型列表已复制');
-    const old = cp.textContent;
-    cp.textContent = ok ? '已复制' : '复制失败';
-    setTimeout(() => { cp.textContent = old; }, 1500);
+    // 同样只切颜色不改文字, 免得底部按钮区跟着位移
+    cp.classList.toggle('copied', !!ok);
+    setTimeout(() => { cp.classList.remove('copied'); }, 1600);
   });
   // 行内「复制」按钮走**全局事件委托**(见下方 document 级监听), 这里不再逐个绑定 ——
   // 委托只绑一次, 不受"渲染时机/重渲染丢绑定"影响, 也不会重复触发。
