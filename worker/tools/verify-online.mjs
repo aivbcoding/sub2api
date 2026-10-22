@@ -33,17 +33,19 @@ try {
   // 2026-09-24: 独立「模型别名」菜单也并入「模型定价」页的「别名」标签
   ok(!html.includes('data-page="aliases"'), '导航已无独立 data-page="aliases"(别名菜单已并入模型定价)');
   ok(html.includes('模型管理'), '页面含合并后的「模型管理」标题');
-  ok(html.includes('自行新增别名') && html.includes('从上游获取并批量新增'),
-    '「模型别名」标签含 ①自行新增 ②从上游获取 两块');
+  // 2026-10-22: 标签页重构为 别名列表/别名设置/模型定价/默认单价 四个, 旧「自行新增别名」文案移除
+  ok(html.includes('从上游获取模型') && html.includes('id="m-fetch"'),
+    '「模型管理」保留「从上游获取模型」入口');
   ok(!/PAGES\.aliases\s*=/.test(html), 'PAGES.aliases 独立页面函数已移除');
   ok(html.includes('function suggestAlias'), '含 suggestAlias(平台名+模型ID 规范)');
   ok(html.includes('d-alias'), '含模型获取表格的别名输入框');
   ok(html.includes('al-alias'), '含别名编辑弹窗的输入框');
 
-  // ---- 合并页: 标签页切换「别名 / 定价」 ----
+  // ---- 合并页: 标签页切换「别名列表 / 别名设置 / 模型定价 / 默认单价」 ----
   ok(html.includes('class="page-tabs sticky"'), '有标签页容器 .page-tabs(吸顶)');
-  ok(html.includes('data-mtab="alias"') && html.includes('data-mtab="price"'),
-    '标签项是 别名 / 定价 两个(data-mtab)');
+  ok(html.includes('data-mtab="alist"') && html.includes('data-mtab="aset"') &&
+     html.includes('data-mtab="price"') && html.includes('data-mtab="default"'),
+    '标签项是 别名列表 / 别名设置 / 模型定价 / 默认单价(data-mtab, 2026-10 重构)');
   ok(html.includes('function modelsAliasView'), '别名视图渲染函数 modelsAliasView 已上线');
   ok(html.includes('function modelsPricingView'), '定价视图渲染函数 modelsPricingView 已上线');
 
@@ -317,7 +319,9 @@ try {
   ok(/\.main::-webkit-scrollbar\s*\{/.test(html), '右侧内容区有细滚动条样式');
   ok(/\.page-head h2::before\s*\{/.test(html), '页面标题左有强调竖条');
   ok(/\.panel-title::before\s*\{/.test(html), '面板标题有强调竖条');
-  ok(/th\s*\{[^}]*position:\s*sticky/.test(html), '表头 sticky(长表格有上下文)');
+  // 2026-10-22: th 表头不再 sticky, 吸顶由 .page-head(页面标题栏)+.ops-sticky(操作列固定)承担
+  ok(/\.page-head\s*\{[^}]*position:\s*sticky/.test(html), '页头吸顶(.page-head sticky)');
+  ok(html.includes('.ops-sticky'), '长表格操作列固定(.ops-sticky)');
   ok(/\.btn\s*\{[^}]*display:\s*inline-flex/.test(html), '按钮统一 inline-flex');
 
   // ---- 角色权限弹窗新布局 ----
