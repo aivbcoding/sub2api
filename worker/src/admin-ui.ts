@@ -707,6 +707,12 @@ const ADMIN_HTML = `<!DOCTYPE html>
     border-radius: 10px 10px 0 0;
   }
   .modal-body { padding: 18px 20px; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+  /* 「获取模型」结果弹窗: 只留**一条**滚动条(列表内), 弹窗 body 自身不滚。
+     ⚠️ 列表高度只能写 max-height —— .modal 只有 max-height 没有 height,
+     写 height:100% 会退化成内容撑开(同 .doc-layout 的教训)。 */
+  .modal-body.fm-body { overflow: hidden; display: flex; flex-direction: column; }
+  .fm-body .fm-hint { flex: 0 0 auto; margin: 0 0 10px; }
+  .fm-body .fm-list { flex: 1 1 auto; min-height: 0; max-height: 56vh; overflow: auto; }
   .modal-foot {
     padding: 14px 20px; border-top: 1px solid var(--border);
     display: flex; justify-content: flex-end; gap: 8px;
@@ -1335,7 +1341,7 @@ function openModal(title, bodyHtml, footHtml, opts) {
   $('#modal').innerHTML =
     '<div class="modal-head">' + esc(title) +
       (o.sub ? '<small>' + esc(o.sub) + '</small>' : '') + '</div>' +
-    '<div class="modal-body">' + bodyHtml + '</div>' +
+    '<div class="modal-body' + (o.bodyClass ? ' ' + esc(o.bodyClass) : '') + '">' + bodyHtml + '</div>' +
     '<div class="modal-foot">' + footHtml + '</div>';
   $('#overlay').classList.remove('hidden');
 }
@@ -4153,18 +4159,24 @@ async function fetchModelsWithKey(key) {
 
   ids.sort();
   const body = ids.length
-    ? '<p class="hint">共 ' + ids.length + ' 个可用模型:</p>' +
-      '<div class="table-wrap" style="max-height:420px"><table><thead><tr><th>模型 ID</th></tr></thead><tbody>' +
-      ids.map((id) => '<tr><td class="mono">' + esc(id) + '</td></tr>').join('') +
+    ? '<p class="hint fm-hint">共 ' + ids.length + ' 个可用模型:</p>' +
+      '<div class="fm-list"><table><thead><tr><th>模型 ID</th><th style="width:1%">操作</th></tr></thead><tbody>' +
+      ids.map((id) =>
+        '<tr><td class="mono">' + esc(id) + '</td>' +
+        '<td><button class="btn sm" data-copy-model="' + esc(id) + '">复制</button></td></tr>').join('') +
       '</tbody></table></div>'
     : '<div class="empty">该 Key 暂时没有可用模型 —— 请确认 Key 状态正常、所在分组已配置模型。</div>';
   openModal('可用模型 (' + ids.length + ')', body,
-    '<button class="btn" id="fm-close">关闭</button><button class="btn primary" id="fm-copy">复制全部</button>');
+    '<button class="btn" id="fm-close">关闭</button><button class="btn primary" id="fm-copy">复制全部</button>',
+    { bodyClass: ids.length ? 'fm-body' : '' });
   $('#fm-close').addEventListener('click', closeModal);
   const cp = $('#fm-copy');
   // 🚨 这里必须写 \\n: 本函数在 ADMIN_HTML 模板字面量里, 单反斜杠的 \n 会被
   // 模板层先吃掉变成真实换行, 页面 JS 就成了 ids.join(' 换行 ') 直接 SyntaxError(2026-10-22 踩)
   if (cp) cp.addEventListener('click', () => copyText(ids.join('\\n'), '模型列表已复制'));
+  document.querySelectorAll('[data-copy-model]').forEach((el) => {
+    el.addEventListener('click', () => copyText(el.dataset.copyModel, '模型 ID 已复制'));
+  });
 }
 
 function newMyKey() {
