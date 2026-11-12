@@ -416,6 +416,12 @@ try {
   ok(html.includes('base_url_full') && html.includes('已开启完整 URL'),
     '开关状态与动态提示文案随 extra.base_url_full 联动');
   ok(html.includes('完整URL'), '账号列表有「完整URL」徽标');
+  // 2026-11-12 二次修复: 开关外层用 div(不能用 label, 否则点击被隐式转发两次);
+  // 编辑账号可按需还原显示完整凭证
+  ok(html.includes('class="base-url-label"'), '开关外层是 div.base-url-label(点击只切一次)');
+  ok(html.includes('id="a-key-reveal"'), '编辑账号有「显示完整凭证」按钮');
+  const credGate = await fetch(`${BASE}/api/admin/accounts/1/credential`);
+  ok(credGate.status === 401, `未登录 GET /accounts/1/credential -> 401(实际 ${credGate.status})`);
 
   // 老的账号接口没被弄坏
   const a = await fetch(`${BASE}/api/admin/accounts`);

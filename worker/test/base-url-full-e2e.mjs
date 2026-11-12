@@ -139,6 +139,19 @@ async function main() {
   const a0 = await getAcct();
   check('回显 base_url_full === true', a0.base_url_full === true, JSON.stringify({ base_url_full: a0.base_url_full }));
 
+  // ---- 完整凭证: 按需单条读, 列表不吐明文 ----
+  console.log('\n[2b] 还原显示完整凭证');
+  const credRes = await req('GET', `/accounts/${id}/credential`);
+  check('GET /accounts/:id/credential 返回完整明文',
+    credRes.json?.ok === true && credRes.json?.credential === 'sk-e2e-full-url-credential',
+    credRes.text.slice(0, 200));
+  const listRes = await req('GET', '/accounts');
+  check('列表接口不泄露完整凭证',
+    !listRes.text.includes('sk-e2e-full-url-credential'),
+    listRes.text.slice(0, 200));
+  const noAuth = await fetch(`${BASE}/api/admin/accounts/${id}/credential`);
+  check('未登录读完整凭证 -> 401', noAuth.status === 401, `status=${noAuth.status}`);
+
   // ---- 网关转发: 开关开启 -> 原样打到完整地址 ----
   console.log('\n[3] 网关转发(开关开启)');
   const gw1 = await fetch(`${BASE}${GW_PATH}`, {
@@ -201,6 +214,8 @@ async function main() {
   // ---- 清理 ----
   const delRes = await req('DELETE', `/accounts/${id}`);
   check('删除测试账号返回 200', delRes.status === 200, delRes.text.slice(0, 200));
+  const goneRes = await req('GET', `/accounts/${id}/credential`);
+  check('账号删除后凭证接口 -> 404', goneRes.status === 404, `status=${goneRes.status}`);
 
   mock.close();
   console.log(`\n=== 结果: ${pass} passed, ${fail} failed, ${skip} skipped ===\n`);

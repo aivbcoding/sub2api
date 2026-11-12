@@ -913,6 +913,13 @@ const ADMIN_HTML = `<!DOCTYPE html>
   .ann-empty .ico { font-size: 30px; line-height: 1; opacity: .5; }
   .form-row { margin-bottom: 14px; }
   .form-row label { display: block; margin-bottom: 5px; font-size: 12px; font-weight: 500; color: #374151; }
+  /* Base URL 那行的标签用 div: 它内部含开关的 checkbox, 用 <label> 会把点击
+     隐式转发给 checkbox, 与开关自己的切换监听叠加成"切两次"(点了没反应)。 */
+  .form-row .base-url-label { display: block; margin-bottom: 5px; font-size: 12px; font-weight: 500; color: #374151; }
+  /* API Key 行: 输入框 + 显示完整凭证按钮并排 */
+  .key-reveal-row { display: flex; gap: 8px; align-items: center; }
+  .key-reveal-row > input { width: auto; flex: 1 1 auto; min-width: 0; }
+  .key-reveal-row > .btn { flex: 0 0 auto; white-space: nowrap; }
   /* 「完整 URL」胶囊开关 —— 挂在 Base URL 标签行右侧 */
   .url-switch { float: right; display: inline-flex; align-items: center; gap: 6px; font-weight: 400; font-size: 12px; color: var(--muted); cursor: pointer; user-select: none; }
   .url-switch:hover { color: var(--text); }
@@ -922,6 +929,7 @@ const ADMIN_HTML = `<!DOCTYPE html>
   .url-switch .sw i::after { content: ''; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: left .15s; }
   .url-switch .sw input:checked + i { background: var(--primary); }
   .url-switch .sw input:checked + i::after { left: 17px; }
+  .url-switch .sw input:focus-visible + i { outline: 2px solid var(--primary); outline-offset: 2px; }
   /* 表单内的说明紧贴输入框, 所以这里要显式覆盖全局 .hint 的段间距 */
   .form-row .hint { font-size: 11px; color: var(--muted); margin: 4px 0 0; }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -2414,12 +2422,16 @@ function acctForm(a, d, g) {
       '<select id="a-protocol">' + protoOpts + '</select>' +
       '<div class="hint" id="proto-hint" style="margin-top:6px;color:var(--muted);font-size:12px"></div></div>' +
     '<div class="form-row"><label>API Key / 凭证' + (isEdit ? '(留空表示不修改)' : '') + '</label>' +
-      '<input id="a-key" class="mono" placeholder="' + (isEdit ? esc(a.credential_preview || '留空不修改') : 'sk-...') + '"></div>' +
-    '<div class="form-row"><label>Base URL <span id="base-req" class="muted"></span>' +
+      '<div class="key-reveal-row">' +
+        '<input id="a-key" class="mono" placeholder="' + (isEdit ? esc(a.credential_preview || '留空不修改') : 'sk-...') + '">' +
+        (isEdit ? '<button type="button" class="btn sm" id="a-key-reveal">显示完整凭证</button>' : '') +
+      '</div>' +
+      '<div class="hint" id="a-key-hint" style="margin-top:6px;color:var(--muted);font-size:12px"></div></div>' +
+    '<div class="form-row"><div class="base-url-label">Base URL <span id="base-req" class="muted"></span>' +
       '<span class="url-switch" id="base-full-wrap" title="开启后: 上面的地址就是最终请求地址, 网关不再自动拼接 /v1/chat/completions 等路径">' +
         '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1.5px"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>完整 URL' +
         '<span class="sw"><input type="checkbox" id="a-base-full"' + (isEdit && a.base_url_full ? ' checked' : '') + '><i></i></span>' +
-      '</span></label>' +
+      '</span></div>' +
       '<input id="a-base" class="mono" value="' + esc(isEdit && a.base_url ? a.base_url : '') + '" placeholder="' + esc(defaultHint[curProtocol] || 'https://...') + '">' +
       '<div class="hint" id="base-hint" style="margin-top:6px;color:var(--muted);font-size:12px"></div>' +
       '<div class="muted" id="base-full-hint" style="font-size:12px;margin-top:4px"></div></div>' +
@@ -2502,15 +2514,48 @@ function acctForm(a, d, g) {
   $('#a-platform').addEventListener('change', () => syncPlatformFields(true));
   $('#a-protocol').addEventListener('change', () => syncPlatformFields(false));
   $('#a-base').addEventListener('input', () => syncPlatformFields(false));
-  // 完整 URL 胶囊开关: 文字/图标部分不是 label, 点它要代为切换; 点 input 本身则已切换
+  // 完整 URL 胶囊开关: 外层是 div(不是 label), 所以这里**只切一次**。
+  // 点文字/图标时手动切换并把焦点落到 checkbox 上; 点 input 本身浏览器已经切换+聚焦。
   $('#base-full-wrap').addEventListener('click', (e) => {
-    if (e.target.id === 'a-base-full') return;
     const cb = $('#a-base-full');
+    if (e.target === cb) return;
     cb.checked = !cb.checked;
+    cb.focus();
     cb.dispatchEvent(new Event('change'));
   });
   $('#a-base-full').addEventListener('change', () => syncPlatformFields(false));
   syncPlatformFields(false);
+
+  // 编辑时按需还原完整凭证: 走独立接口(仅超管可读、写审计), 列表接口不吐明文。
+  // 显示后可直接编辑/复制; 与原始值相同则保存时不提交 api_key, 不会触发无谓的粘性会话提示。
+  let revealedKey = '';
+  if (isEdit) {
+    const revealBtn = $('#a-key-reveal');
+    const keyInput = $('#a-key');
+    revealBtn.addEventListener('click', async () => {
+      if (revealBtn.dataset.on === '1') {
+        keyInput.value = '';
+        revealedKey = '';
+        revealBtn.dataset.on = '0';
+        revealBtn.textContent = '显示完整凭证';
+        $('#a-key-hint').textContent = '';
+        return;
+      }
+      revealBtn.disabled = true;
+      revealBtn.textContent = '读取中…';
+      try {
+        const r = await api('/accounts/' + a.id + '/credential');
+        revealedKey = String(r.credential || '');
+        keyInput.value = revealedKey;
+        keyInput.focus();
+        keyInput.select();
+        revealBtn.dataset.on = '1';
+        revealBtn.textContent = '隐藏';
+        $('#a-key-hint').textContent = '已显示完整凭证: 可直接编辑或复制; 原样保存不会改动凭证, 点「隐藏」可放弃修改。';
+      } catch (e) { toast(e.message, 'err'); }
+      finally { revealBtn.disabled = false; }
+    });
+  }
 
   $('#m-cancel').addEventListener('click', closeModal);
   $('#m-save').addEventListener('click', async () => {
@@ -2565,7 +2610,8 @@ function acctForm(a, d, g) {
       group_ids: groupIds,
     };
     const key = $('#a-key').value.trim();
-    if (key) payload.api_key = key;
+    // 显示过完整凭证且原样未改 -> 不提交(避免"只是看一眼"被当成改 key)
+    if (key && key !== revealedKey) payload.api_key = key;
 
     try {
       await api(isEdit ? '/accounts/' + a.id : '/accounts', {

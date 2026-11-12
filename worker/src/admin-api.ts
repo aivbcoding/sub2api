@@ -2262,6 +2262,31 @@ async function handleAccounts(
   req: Request,
   parts: string[],
 ): Promise<Response> {
+  // 还原显示完整凭证: GET /accounts/:id/credential
+  // 列表接口只给掩码(credential_preview), 明文按需单条读取: 仅超管 + 写审计。
+  if (method === 'GET' && id !== null && parts[2] === 'credential') {
+    if (!auth.admin?.is_admin) {
+      return json(
+        { error: { message: '只有超级管理员可以查看完整凭证。', type: 'forbidden' } },
+        403,
+      );
+    }
+    const row = await env.DB.prepare(
+      `SELECT credentials FROM accounts WHERE id = ?1 AND deleted_at IS NULL`,
+    ).bind(id).first<{ credentials: string }>();
+    if (!row) return notFound('Account not found');
+
+    let credential = '';
+    try {
+      const creds = JSON.parse(String(row.credentials ?? '{}')) as Record<string, unknown>;
+      credential = extractCredential(creds) ?? '';
+    } catch {
+      credential = '';
+    }
+    await auditLog(env, auth.admin, 'read', 'account_credential', id, 'reveal credential', req);
+    return json({ ok: true, credential });
+  }
+
   // 连通性测试: POST /accounts/:id/test
   if (method === 'POST' && id !== null && parts[2] === 'test') {
     return await testAccount(env, id, auth, req);
