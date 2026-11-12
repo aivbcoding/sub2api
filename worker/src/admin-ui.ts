@@ -913,6 +913,15 @@ const ADMIN_HTML = `<!DOCTYPE html>
   .ann-empty .ico { font-size: 30px; line-height: 1; opacity: .5; }
   .form-row { margin-bottom: 14px; }
   .form-row label { display: block; margin-bottom: 5px; font-size: 12px; font-weight: 500; color: #374151; }
+  /* 「完整 URL」胶囊开关 —— 挂在 Base URL 标签行右侧 */
+  .url-switch { float: right; display: inline-flex; align-items: center; gap: 6px; font-weight: 400; font-size: 12px; color: var(--muted); cursor: pointer; user-select: none; }
+  .url-switch:hover { color: var(--text); }
+  .url-switch .sw { position: relative; display: inline-block; width: 32px; height: 17px; flex: 0 0 32px; }
+  .url-switch .sw input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+  .url-switch .sw i { position: absolute; inset: 0; border-radius: 999px; background: #cbd5e1; transition: background .15s; }
+  .url-switch .sw i::after { content: ''; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: left .15s; }
+  .url-switch .sw input:checked + i { background: var(--primary); }
+  .url-switch .sw input:checked + i::after { left: 17px; }
   /* 表单内的说明紧贴输入框, 所以这里要显式覆盖全局 .hint 的段间距 */
   .form-row .hint { font-size: 11px; color: var(--muted); margin: 4px 0 0; }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -2266,7 +2275,8 @@ PAGES.accounts = async () => {
     return '<tr>' +
       '<td>' + esc(a.name) + '</td>' +
       '<td><span class="tag off">' + esc(a.platform) + '</span>' +
-        (a.is_custom_platform ? ' <span class="tag warn" title="自定义第三方平台">自定义</span>' : '') + '</td>' +
+        (a.is_custom_platform ? ' <span class="tag warn" title="自定义第三方平台">自定义</span>' : '') +
+        (a.base_url_full ? ' <span class="tag warn" title="完整 URL: 请求原样使用该账号的 Base URL, 不拼接任何路径">完整URL</span>' : '') + '</td>' +
       // 入口路径: 客户端拿它拼 URL 就能直接打到这条上游, 点一下复制完整地址
       '<td class="mono">' + (a.entry_path
         ? '<button class="btn sm" data-copy-entry="' + esc(a.entry_path) + '" ' +
@@ -2405,14 +2415,14 @@ function acctForm(a, d, g) {
       '<div class="hint" id="proto-hint" style="margin-top:6px;color:var(--muted);font-size:12px"></div></div>' +
     '<div class="form-row"><label>API Key / 凭证' + (isEdit ? '(留空表示不修改)' : '') + '</label>' +
       '<input id="a-key" class="mono" placeholder="' + (isEdit ? esc(a.credential_preview || '留空不修改') : 'sk-...') + '"></div>' +
-    '<div class="form-row"><label>Base URL <span id="base-req" class="muted"></span></label>' +
+    '<div class="form-row"><label>Base URL <span id="base-req" class="muted"></span>' +
+      '<span class="url-switch" id="base-full-wrap" title="开启后: 上面的地址就是最终请求地址, 网关不再自动拼接 /v1/chat/completions 等路径">' +
+        '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1.5px"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>完整 URL' +
+        '<span class="sw"><input type="checkbox" id="a-base-full"' + (isEdit && a.base_url_full ? ' checked' : '') + '><i></i></span>' +
+      '</span></label>' +
       '<input id="a-base" class="mono" value="' + esc(isEdit && a.base_url ? a.base_url : '') + '" placeholder="' + esc(defaultHint[curProtocol] || 'https://...') + '">' +
       '<div class="hint" id="base-hint" style="margin-top:6px;color:var(--muted);font-size:12px"></div>' +
-      '<div class="muted" style="font-size:12px;margin-top:4px">' +
-        '填第三方中转的地址时, <b>只写到版本根</b>(不要带 /v1/chat/completions)。' +
-        '例: <code>https://你的中转.com/v1</code> 或 <code>https://你的中转.com/openai</code>。' +
-        '留空才会用官方默认域名。' +
-      '</div></div>' +
+      '<div class="muted" id="base-full-hint" style="font-size:12px;margin-top:4px"></div></div>' +
     '<div class="form-row"><label>入口路径 <span class="muted">(选填 —— 用请求 URL 直接指定这条上游)</span></label>' +
       '<input id="a-entry" class="mono" autocomplete="off" value="' + esc(isEdit && a.entry_path ? a.entry_path : '') + '" placeholder="例如: sensenova">' +
       '<div class="muted" style="font-size:12px;margin-top:4px">' +
@@ -2467,6 +2477,7 @@ function acctForm(a, d, g) {
     $('#proto-hint').textContent = PROTO_HINT[proto] || '';
 
     const baseVal = $('#a-base').value.trim();
+    const fullOn = !!$('#a-base-full').checked;
     $('#base-req').textContent = custom ? '(自定义平台必填)' : '(留空用官方默认域名)';
     $('#base-hint').textContent = baseVal
       ? ''
@@ -2474,6 +2485,13 @@ function acctForm(a, d, g) {
           ? '自定义平台没有内置默认域名, 不填会导致请求失败。'
           : ('留空将使用默认域名: ' + (defaultHint[proto] || '-')));
     $('#a-base').placeholder = defaultHint[proto] || 'https://...';
+    // 完整 URL 开关: 开与关各说各的, 免得"开了开关还提示写到版本根"自相矛盾
+    $('#base-full-hint').innerHTML = fullOn
+      ? '<b>已开启完整 URL</b>: 上面的地址将按原样使用, 不再自动拼接 /v1/chat/completions 等任何路径。'
+        + (baseVal ? '' : ' (地址留空时开关不生效, 仍按官方默认域名正常拼接)')
+      : '填第三方中转的地址时, <b>只写到版本根</b>(不要带 /v1/chat/completions)。'
+        + '例: <code>https://你的中转.com/v1</code> 或 <code>https://你的中转.com/openai</code>。'
+        + '留空才会用官方默认域名。';
 
     $('#plat-hint').textContent = custom
       ? '自定义平台 "' + sel + '": 保存时会按小写存, 且必须填 Base URL。'
@@ -2484,6 +2502,14 @@ function acctForm(a, d, g) {
   $('#a-platform').addEventListener('change', () => syncPlatformFields(true));
   $('#a-protocol').addEventListener('change', () => syncPlatformFields(false));
   $('#a-base').addEventListener('input', () => syncPlatformFields(false));
+  // 完整 URL 胶囊开关: 文字/图标部分不是 label, 点它要代为切换; 点 input 本身则已切换
+  $('#base-full-wrap').addEventListener('click', (e) => {
+    if (e.target.id === 'a-base-full') return;
+    const cb = $('#a-base-full');
+    cb.checked = !cb.checked;
+    cb.dispatchEvent(new Event('change'));
+  });
+  $('#a-base-full').addEventListener('change', () => syncPlatformFields(false));
   syncPlatformFields(false);
 
   $('#m-cancel').addEventListener('click', closeModal);
@@ -2528,6 +2554,7 @@ function acctForm(a, d, g) {
       protocol: $('#a-protocol').value,
       type: $('#a-type').value,
       base_url: baseUrl || null,
+      base_url_full: !!$('#a-base-full').checked,
       priority: Number($('#a-prio').value || 10),
       concurrency: Number($('#a-conc').value || 3),
       rate_multiplier: Number($('#a-rate').value || 1),
@@ -2546,8 +2573,9 @@ function acctForm(a, d, g) {
         body: JSON.stringify(payload),
       });
       closeModal(); toast('保存成功'); PAGES.accounts();
-      // 改了 key/状态/平台后在旧粘性会话失效前, 老会话仍会走这个账号
-      if (isEdit && (payload.api_key || payload.status || payload.platform || payload.protocol || payload.base_url)) {
+      // 改了 key/状态/平台/完整URL开关后在旧粘性会话失效前, 老会话仍会走这个账号
+      if (isEdit && (payload.api_key || payload.status || payload.platform || payload.protocol || payload.base_url ||
+          payload.base_url_full !== !!(a && a.base_url_full))) {
         setTimeout(askClearSticky, 400);
       }
     } catch (e) { toast(e.message, 'err'); }

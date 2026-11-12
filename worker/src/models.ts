@@ -301,6 +301,21 @@ async function fetchUpstreamModels(
   const base = account.base_url?.trim() || defaultBaseUrl(account.platform);
   if (!base) throw new Error(`account ${account.id} has no base_url`);
 
+  // 「完整 URL」模式(base_url 就是最终请求地址): 模型列表没有可推导的 URL ——
+  // 拿 chat 端点发 GET 只会撞出 404/405, 不如直接说明原因。
+  let baseUrlFull = false;
+  try {
+    const extra = JSON.parse(account.extra || '{}') as Record<string, unknown>;
+    baseUrlFull = extra['base_url_full'] === true;
+  } catch {
+    baseUrlFull = false;
+  }
+  if (baseUrlFull) {
+    throw new Error(
+      `account ${account.id} uses a full URL base_url (no path appended) — model list fetching is not supported for it; manage its model_index manually`,
+    );
+  }
+
   const protocol = resolveProtocol(account.platform, account.protocol);
   const endpoint = deriveModelsEndpoint(protocol);
   const url = `${base.replace(/\/+$/, '')}${endpoint}`;

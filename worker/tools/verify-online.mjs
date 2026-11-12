@@ -408,6 +408,15 @@ try {
     ok(dr.status === 401, `未登录 DELETE ${path} -> 401(实际 ${dr.status})`);
   }
 
+  // ---- 2026-11-12: 上游账号「完整 URL」开关(只读 HTML 断言, 不碰生产数据) ----
+  // 开启后网关原样使用 base_url, 不再拼 /v1/chat/completions 等路径(extra.base_url_full)。
+  ok(html.includes('id="a-base-full"'), '账号表单含「完整 URL」开关(#a-base-full)');
+  ok(/\.url-switch\s*\{/.test(html) && /\.url-switch\s+\.sw\s+input:checked\s*\+\s*i/.test(html),
+    '胶囊开关样式与选中态样式已上线(.url-switch)');
+  ok(html.includes('base_url_full') && html.includes('已开启完整 URL'),
+    '开关状态与动态提示文案随 extra.base_url_full 联动');
+  ok(html.includes('完整URL'), '账号列表有「完整URL」徽标');
+
   // 老的账号接口没被弄坏
   const a = await fetch(`${BASE}/api/admin/accounts`);
   ok(a.status === 401, `未登录 GET /accounts -> 401(实际 ${a.status})`);

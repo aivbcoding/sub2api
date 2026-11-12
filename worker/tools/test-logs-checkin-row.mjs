@@ -84,6 +84,12 @@ function build() {
     fmtNum: (v) => String(Number(v || 0)),
     fmtMoney: (v) => '$' + Number(v || 0).toFixed(4),
     statCard: (t, v) => '<div class="card">' + t + ':' + v + '</div>',
+    // header 卡片的彩色圆形图标(v1.32 后 logsRender 引用) —— 返回占位 SVG 即可, 断言不涉及
+    statIco: (c, ico, t) => '<i class="card-ico ' + c + '">' + t + '</i>',
+    // 汇总卡里的两位小数金额(fmtMoney2), 与 fmtMoney 同为纯字符串格式化
+    fmtMoney2: (v) => '$' + Number(v || 0).toFixed(2),
+    // 「平均每次」金额(avgCost) —— 语义与 admin-ui 里的真身一致: 除数<=0 时给 $0.0000
+    avgCost: (t, c) => (Number(c) || 0) > 0 ? '$' + (Number(t || 0) / Number(c)).toFixed(4) : '$0.0000',
     row2: (k, v) => '<tr><td>' + k + '</td><td>' + v + '</td></tr>',
     openModal: (title, body) => { captured.modalTitle = title; captured.modalBody = body; },
     closeModal: () => {},
@@ -92,9 +98,9 @@ function build() {
     PAGES,
   };
   const api = new Function(
-    'esc', 'fmtTime', 'fmtNum', 'fmtMoney', 'statCard', 'row2', 'openModal', 'closeModal', '$', 'document', 'PAGES',
+    'esc', 'fmtTime', 'fmtNum', 'fmtMoney', 'fmtMoney2', 'avgCost', 'statCard', 'statIco', 'row2', 'openModal', 'closeModal', '$', 'document', 'PAGES',
     src + '\nreturn { logsRender, showLogDetail, logsState };',
-  )(stubs.esc, stubs.fmtTime, stubs.fmtNum, stubs.fmtMoney, stubs.statCard, stubs.row2,
+  )(stubs.esc, stubs.fmtTime, stubs.fmtNum, stubs.fmtMoney, stubs.fmtMoney2, stubs.avgCost, stubs.statCard, stubs.statIco, stubs.row2,
     stubs.openModal, stubs.closeModal, $, doc, PAGES);
   return { api, getEl, captured, PAGES };
 }

@@ -87,8 +87,10 @@ const tsSource = [
   extract('applyAccountAlias'),
   extract('isModelAllowed'),
   extract('isModelAllowedWithAlias'),
+  // inferPlatform 第一步就查分组硬锁(groupLockedPlatform), 不搬进来会 ReferenceError
+  extract('groupLockedPlatform'),
   extract('inferPlatform'),
-  'export { lookupModelRoute, resolveModelPlatformRoute, toModelList, accountModelAliases, accountKnownModels, accountServesModel, buildAutoDiscoverIndex, applyAccountAlias, isModelAllowed, isModelAllowedWithAlias, inferPlatform };',
+  'export { lookupModelRoute, resolveModelPlatformRoute, toModelList, accountModelAliases, accountKnownModels, accountServesModel, buildAutoDiscoverIndex, applyAccountAlias, isModelAllowed, isModelAllowedWithAlias, groupLockedPlatform, inferPlatform };',
 ].join('\n');
 
 const js = ts.transpileModule(tsSource, {

@@ -521,6 +521,23 @@ function accountModelAliases(account: AccountRow): Record<string, string> {
 }
 
 /**
+ * 账号是否开启「完整 URL」(extra.base_url_full)。
+ *
+ * 开启后账号的 base_url 被视为**最终请求地址** —— 网关不再往后面拼
+ * /v1/chat/completions、/v1/messages 或 gemini 的 :action 等任何路径。
+ * 适用场景: 中转/网关把端点藏在很深的自定义路径里, 或者一个地址只对一个端点。
+ * 仅在 base_url 非空时生效(内置平台留空回落默认域名时, 开关无效)。
+ */
+function accountBaseUrlFull(account: AccountRow): boolean {
+  try {
+    const extra = account.extra ? (JSON.parse(account.extra) as Record<string, unknown>) : null;
+    return extra?.['base_url_full'] === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * 解析入参里的模型索引 —— 既接受 JSON 字符串, 也接受已解析的数组。
  *
  * 统一出口的意义: schema 里它是 TEXT 列, 但路由时可能已经被 JSON.parse 过;
@@ -676,6 +693,12 @@ function buildUpstreamUrl(
     throw new Error(
       `Upstream account "${account.name}" has no base_url and platform "${account.platform}" has no default.`,
     );
+  }
+
+  // 「完整 URL」开关: 用户填的地址就是最终请求地址, 不再拼任何路径。
+  // 只在 base_url 非空时生效 —— 留空回落默认域名的账号仍走正常拼接。
+  if (accountBaseUrlFull(account) && account.base_url?.trim()) {
+    return account.base_url.trim();
   }
 
   if (protocol === 'gemini') {

@@ -47,6 +47,7 @@
     "test:gmfetch": "node tools/test-group-models-fetch.mjs",
     "test:acctgrp": "node tools/test-acct-form-default-group.mjs",
     "test:logsck": "node tools/test-logs-checkin-row.mjs",
+    "test:baseurl": "node tools/run-e2e.mjs 8787 test/base-url-full-e2e.mjs",
     "test:nav": "node tools/test-nav-guard.mjs",
     "test:roles": "node tools/test-roles-guard.mjs",
     "test:models": "node tools/test-models-group-scope.mjs",

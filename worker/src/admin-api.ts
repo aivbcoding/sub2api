@@ -2347,7 +2347,7 @@ async function handleAccounts(
         protocol,
         String(body.type ?? 'apikey'),
         JSON.stringify({ api_key: credential }),
-        JSON.stringify(buildAccountExtra(body['model_aliases'])),
+        JSON.stringify(buildAccountExtra(body['model_aliases'], body['base_url_full'] === true)),
         Number(body.concurrency ?? 3),
         body.load_factor ? Number(body.load_factor) : null,
         Number(body.priority ?? 10),
@@ -2450,8 +2450,9 @@ async function handleAccounts(
       binds.push(JSON.stringify({ api_key: newCred }));
     }
 
-    // 模型别名存在 extra 列(合并式更新, 不动 extra 里的其它键)
-    if (body['model_aliases'] !== undefined) {
+    // extra 列合并式更新: 模型别名(整表替换) + 「完整 URL」开关(base_url_full)。
+    // 两者共用一次读-改-写, 都不动 extra 里的其它键。
+    if (body['model_aliases'] !== undefined || body['base_url_full'] !== undefined) {
       const cur = await env.DB.prepare(`SELECT extra FROM accounts WHERE id = ?1`)
         .bind(id)
         .first<{ extra: string }>();
@@ -2466,7 +2467,15 @@ async function handleAccounts(
       }
       // 别名清空(传 null / {} / 全是非法值)时必须把键**删掉**, 不能留着旧值 ——
       // 否则"删掉最后一条别名"会静默失效(见 mergeAccountAliases 的注释)。
-      const merged = mergeAccountAliases(curExtra, body['model_aliases']);
+      const merged =
+        body['model_aliases'] !== undefined
+          ? mergeAccountAliases(curExtra, body['model_aliases'])
+          : { ...curExtra };
+      // 完整 URL 开关: 布尔语义, false 时把键删掉(回到正常拼接)
+      if (body['base_url_full'] !== undefined) {
+        if (body['base_url_full'] === true) merged['base_url_full'] = true;
+        else delete merged['base_url_full'];
+      }
       fields.push(`extra = ?${binds.length + 1}`);
       binds.push(JSON.stringify(merged));
     }
@@ -2555,8 +2564,12 @@ async function handleAccounts(
       env.DB.prepare(`DELETE FROM model_pricing WHERE account_id = ?1`).bind(id),
       env.DB.prepare(`DELETE FROM account_groups WHERE account_id = ?1`).bind(id),
     ]);
+    // entry_path 的唯一索引不带 deleted_at 条件, 而 findEntryPathConflict 只查活账号 ——
+    // 软删后不清掉的话, 这个入口路径会被永久占用: 再建账号填同一路径,
+    // 查重说"没被用", INSERT 却撞 UNIQUE(报的还是 D1 原始错误, 用户看不懂)。
+    // 已删账号不参与任何路由, 清掉无害。
     await env.DB.prepare(
-      `UPDATE accounts SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2 AND deleted_at IS NULL`,
+      `UPDATE accounts SET deleted_at = ?1, updated_at = ?1, entry_path = NULL WHERE id = ?2 AND deleted_at IS NULL`,
     )
       .bind(new Date().toISOString(), id)
       .run();
@@ -2573,17 +2586,23 @@ async function handleAccounts(
  * 形态: { 对外模型名: 该上游认识的名字 }。非法/空的键值直接丢弃 ——
  * 这里只做"入库前清洗", 真正的匹配在 gateway 侧 (见 applyAccountAlias)。
  * 传 null/undefined 表示清空(返回不带 model_aliases 键的对象)。
+ *
+ * baseUrlFull: 「完整 URL」开关(extra.base_url_full) —— 开启后网关不再
+ * 往 base_url 后面拼 /v1/chat/completions 等路径, 原样使用该地址。
  */
-function buildAccountExtra(raw: unknown): Record<string, unknown> {
-  if (raw === null || raw === undefined) return {};
-  if (typeof raw !== 'object' || Array.isArray(raw)) return {};
-  const obj: Record<string, string> = {};
-  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-    const name = String(k ?? '').trim();
-    const target = String(v ?? '').trim();
-    if (name && target) obj[name] = target;
+function buildAccountExtra(raw: unknown, baseUrlFull = false): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (raw !== null && raw !== undefined && typeof raw === 'object' && !Array.isArray(raw)) {
+    const obj: Record<string, string> = {};
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      const name = String(k ?? '').trim();
+      const target = String(v ?? '').trim();
+      if (name && target) obj[name] = target;
+    }
+    if (Object.keys(obj).length > 0) out['model_aliases'] = obj;
   }
-  return Object.keys(obj).length > 0 ? { model_aliases: obj } : {};
+  if (baseUrlFull) out['base_url_full'] = true;
+  return out;
 }
 
 /**
@@ -2659,6 +2678,15 @@ function serializeAccount(row: AccountRow & Record<string, unknown>) {
     modelIndex = null;
   }
 
+  // 「完整 URL」开关(extra.base_url_full) —— 回显给编辑弹窗的胶囊开关
+  let baseUrlFull = false;
+  try {
+    const extraFull = JSON.parse(String(row.extra ?? '{}')) as Record<string, unknown>;
+    baseUrlFull = extraFull['base_url_full'] === true;
+  } catch {
+    baseUrlFull = false;
+  }
+
   return {
     id: row.id,
     name: row.name,
@@ -2679,6 +2707,7 @@ function serializeAccount(row: AccountRow & Record<string, unknown>) {
     status: row.status,
     schedulable: row.schedulable === 1,
     base_url: row.base_url,
+    base_url_full: baseUrlFull,
     entry_path: String(row.entry_path ?? '').trim() || null,
     // 实际生效的上游地址: 配了 base_url 就用它, 否则回落到官方默认域名。
     // 前端「模型获取」页要展示"请求到底打到哪", 光看 base_url 空值会让人以为没配置。
@@ -2725,6 +2754,24 @@ async function resolveAccountEndpoint(
   const credential = extractCredential(creds);
   if (!credential) {
     return { error: json({ ok: false, message: 'No credential configured for this account.' }) };
+  }
+
+  // 「完整 URL」模式(extra.base_url_full): base_url 是 chat 端点, 模型列表 URL 无法推导 ——
+  // 拿 chat 地址去 GET 模型列表只会撞出 404/405, 明确报错更诚实。
+  // 「连通性测试」与「模型获取」共用本函数, 两处都会把 message 透传给前端 toast。
+  try {
+    const extraFull = JSON.parse(String(account.extra ?? '{}')) as Record<string, unknown>;
+    if (extraFull['base_url_full'] === true) {
+      return {
+        error: json({
+          ok: false,
+          message:
+            '该账号开启了「完整 URL」(地址原样使用, 网关不拼接路径), 无法推导模型列表地址 —— 请在「模型管理 → 模型别名」里手工维护它的模型。',
+        }),
+      };
+    }
+  } catch {
+    /* extra 损坏按未开启处理 */
   }
 
   // 协议驱动: 自定义平台等价于"换个 base_url 的同协议上游"
