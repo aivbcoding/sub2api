@@ -423,6 +423,11 @@ try {
   const credGate = await fetch(`${BASE}/api/admin/accounts/1/credential`);
   ok(credGate.status === 401, `未登录 GET /accounts/1/credential -> 401(实际 ${credGate.status})`);
 
+  // 2026-11-23: 新增 openai-responses 协议档位(只支持 /v1/responses 的模型用)
+  ok(html.includes('openai-responses'), '协议下拉含 openai-responses 档位');
+  ok(html.includes('Responses API') && html.includes('/v1/responses'),
+    '协议提示说明 Responses API 与 /v1/responses');
+
   // 老的账号接口没被弄坏
   const a = await fetch(`${BASE}/api/admin/accounts`);
   ok(a.status === 401, `未登录 GET /accounts -> 401(实际 ${a.status})`);

@@ -2811,7 +2811,7 @@ async function resolveAccountEndpoint(
     };
   }
 
-  const { applyUpstreamAuth } = await import('./protocol');
+  const { applyUpstreamAuth, UPSTREAM_USER_AGENT } = await import('./protocol');
   const headers = new Headers();
   let url = '';
 
@@ -2831,6 +2831,9 @@ async function resolveAccountEndpoint(
       url = `${base.replace(/\/+$/, '')}/v1/models`;
       applyUpstreamAuth(headers, protocol, account.type, credential);
   }
+
+  // 与网关转发保持一致: 后台的「连通性测试 / 从上游获取模型」也固定 UA
+  headers.set('user-agent', UPSTREAM_USER_AGENT);
 
   return { protocol, url, headers, credential };
 }

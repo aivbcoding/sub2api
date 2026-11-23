@@ -2359,9 +2359,10 @@ PAGES.accounts = async () => {
 function acctForm(a, d, g) {
   const isEdit = !!a;
   const builtins = d.platforms || [];
-  const protocols = d.protocols || ['openai', 'anthropic', 'gemini'];
+  const protocols = d.protocols || ['openai', 'openai-responses', 'anthropic', 'gemini'];
   const PROTO_HINT = {
     openai: 'OpenAI 兼容 · Authorization: Bearer · /v1/chat/completions',
+    'openai-responses': 'OpenAI Responses API · Authorization: Bearer · /v1/responses (只支持 responses 的模型选这个)',
     anthropic: 'Anthropic 原生 · x-api-key · /v1/messages',
     gemini: 'Google AI Studio · x-goog-api-key · /v1beta/models/xxx:generateContent',
   };

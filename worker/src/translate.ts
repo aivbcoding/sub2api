@@ -120,6 +120,9 @@ export function upstreamFormatFor(
 ): WireFormat {
   if (protocol === 'anthropic') return 'anthropic';
   if (protocol === 'gemini') return 'gemini';
+  // Responses 专用上游: 无论客户端说什么协议, 都转成 responses 线格式。
+  // 用于「只支持 /v1/responses、chat 下带 tools 会 400」的模型(如 GPT-6.x-sol)。
+  if (protocol === 'openai-responses') return 'openai-responses';
   // openai 协议: 入站本来就是 responses 就保持, 其它一律走 chat
   // (chat/completions 是各类第三方中转站的事实标准, 兼容性最好)
   return inbound === 'openai-responses' ? 'openai-responses' : 'openai-chat';

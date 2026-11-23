@@ -47,8 +47,21 @@ const mock = createServer((req, res) => {
   let body = '';
   req.on('data', (c) => { body += c; });
   req.on('end', () => {
-    hits.push({ method: req.method, url: req.url });
+    hits.push({ method: req.method, url: req.url, ua: req.headers['user-agent'] || '', body });
     res.writeHead(200, { 'content-type': 'application/json' });
+    // /custom/resp 用来验证 openai-responses 协议: 返回 responses 形状
+    if (req.url.includes('/custom/resp')) {
+      res.end(JSON.stringify({
+        id: 'resp_e2e',
+        object: 'response',
+        model: 'e2e-full-model',
+        output: [
+          { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'ok' }] },
+        ],
+        usage: { input_tokens: 3, output_tokens: 2, total_tokens: 5 },
+      }));
+      return;
+    }
     res.end(JSON.stringify({
       id: 'chatcmpl-e2e-full',
       object: 'chat.completion',
@@ -156,14 +169,19 @@ async function main() {
   console.log('\n[3] 网关转发(开关开启)');
   const gw1 = await fetch(`${BASE}${GW_PATH}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${KEY}` },
+    // 故意带一个假客户端 UA: 网关必须丢掉它, 换成固定的上游 UA
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${KEY}`, 'user-agent': 'curl/8.0-impostor' },
     body: JSON.stringify({ model: 'e2e-full-model', messages: [{ role: 'user', content: 'hi' }] }),
   });
   const gw1Text = await gw1.text();
   check('网关返回 200', gw1.status === 200, `status=${gw1.status} ${gw1Text.slice(0, 200)}`);
   check('上游收到的 path 就是完整地址的 path, 没拼任何后缀',
     hits.length === 1 && hits[0].url === '/custom/endpoint/chat/completions',
-    `hits=${JSON.stringify(hits)}`);
+    `urls=${JSON.stringify(hits.map((h) => h.url))}`);
+  // 🚨 客户端 UA 透传是历史行为; 现在必须被固定值覆盖(客户端故意发了 curl/8.0-impostor)
+  check('上游收到的 User-Agent 被定死为 claude-cli/2.1.161 (external, cli)',
+    hits.length === 1 && hits[0].ua === 'claude-cli/2.1.161 (external, cli)',
+    `ua=${JSON.stringify(hits.map((h) => h.ua))}`);
 
   // ---- 关掉开关 -> 恢复拼接 ----
   console.log('\n[4] 关闭开关 -> 恢复正常拼接');
@@ -210,6 +228,45 @@ async function main() {
     testRes.text.slice(0, 300));
   check('测试期间没往 mock 发过 GET(没有打坏请求)', hits.every((h) => h.method === 'POST'),
     `hits=${JSON.stringify(hits)}`);
+
+  // ---- openai-responses 协议: anthropic 入站 -> responses 上游 ----
+  console.log('\n[7] openai-responses 协议(anthropic 入站 -> /v1/responses)');
+  const RESP_URL = `http://127.0.0.1:${mockPort}/custom/resp`;
+  const putResp = await req('PUT', `/accounts/${id}`, {
+    protocol: 'openai-responses',
+    base_url: RESP_URL,
+    base_url_full: true,
+  });
+  check('切换到 openai-responses 返回 200', putResp.status === 200, putResp.text.slice(0, 200));
+
+  const before = hits.length;
+  const gw3 = await fetch(`${BASE}/${ENTRY}/v1/messages`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${KEY}`, 'anthropic-version': '2023-06-01' },
+    body: JSON.stringify({
+      model: 'e2e-full-model',
+      max_tokens: 32,
+      system: 'be brief',
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [{ name: 'get_time', description: 'get time', input_schema: { type: 'object', properties: {} } }],
+    }),
+  });
+  const gw3Text = await gw3.text();
+  check('anthropic 入站打 responses 上游返回 200', gw3.status === 200,
+    `status=${gw3.status} ${gw3Text.slice(0, 200)}`);
+
+  const hit3 = hits[before];
+  let b3 = {};
+  try { b3 = JSON.parse(hit3?.body || '{}'); } catch { b3 = {}; }
+  check('上游地址是 responses 端点', !!hit3 && hit3.url === '/custom/resp', `url=${hit3?.url}`);
+  check('请求体转成了 responses 形状(有 input, 没有 messages)',
+    Array.isArray(b3.input) && b3.messages === undefined,
+    JSON.stringify(Object.keys(b3)));
+  check('tools 是 responses 扁平结构(tools[0].name, 无 function 层)',
+    Array.isArray(b3.tools) && b3.tools[0]?.name === 'get_time' && b3.tools[0]?.function === undefined,
+    JSON.stringify(b3.tools));
+  check('max_tokens 转成了 max_output_tokens', b3.max_output_tokens === 32,
+    `max_output_tokens=${b3.max_output_tokens}`);
 
   // ---- 清理 ----
   const delRes = await req('DELETE', `/accounts/${id}`);

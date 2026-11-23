@@ -55,17 +55,21 @@ export function normalizePlatformName(p: string): string {
  * 通信协议 —— 决定请求怎么发、认证头怎么加
  *
  * 自定义平台必须显式选一个, 因为仅凭平台名无法判断对端说哪种协议。
- * 前三者覆盖了市面上绝大多数第三方中转:
- *   - openai     : OpenAI 兼容 (/v1/chat/completions, Authorization: Bearer)
- *   - anthropic  : Anthropic 原生 (/v1/messages, x-api-key)
- *   - gemini     : Google AI Studio (/v1beta/models/xxx:generateContent, x-goog-api-key)
+ * 前四者覆盖了市面上绝大多数第三方中转:
+ *   - openai           : OpenAI 兼容 (/v1/chat/completions, Authorization: Bearer)
+ *   - openai-responses : OpenAI Responses API (/v1/responses, Authorization: Bearer)
+ *                        给「只支持 responses、不支持 chat/completions」的模型用
+ *                        (如 GPT-6.x-sol 这类推理模型: chat 下带 tools 直接 400)
+ *   - anthropic        : Anthropic 原生 (/v1/messages, x-api-key)
+ *   - gemini           : Google AI Studio (/v1beta/models/xxx:generateContent, x-goog-api-key)
  */
-export const UPSTREAM_PROTOCOLS = ['openai', 'anthropic', 'gemini'] as const;
+export const UPSTREAM_PROTOCOLS = ['openai', 'openai-responses', 'anthropic', 'gemini'] as const;
 export type UpstreamProtocol = (typeof UPSTREAM_PROTOCOLS)[number];
 
 /** 各协议的默认 Base URL 提示(仅用于界面占位, 不做兜底) */
 export const PROTOCOL_BASE_URL_HINTS: Record<UpstreamProtocol, string> = {
   openai: 'https://api.openai.com',
+  'openai-responses': 'https://api.openai.com',
   anthropic: 'https://api.anthropic.com',
   gemini: 'https://generativelanguage.googleapis.com',
 };
@@ -193,6 +197,15 @@ export function deriveUpstreamEndpoint(
       // chat/completions(以及未知路径)按 chat 走 —— 第三方中转的事实标准
       return ENDPOINTS.CHAT_COMPLETIONS;
 
+    case 'openai-responses':
+      // 该账号的上游只认 Responses API: 对话一律打到 /v1/responses,
+      // 模型列表 / embeddings / responses 子端点仍按各自原生路径走。
+      if (inboundPath.includes('/compact')) return ENDPOINTS.RESPONSES_COMPACT;
+      if (inboundPath.includes('/input_tokens')) return ENDPOINTS.RESPONSES_INPUT_TOKENS;
+      if (inboundPath.includes('/models')) return ENDPOINTS.MODELS;
+      if (inboundPath.includes('/embeddings')) return ENDPOINTS.EMBEDDINGS;
+      return ENDPOINTS.RESPONSES;
+
     case 'gemini':
       // Gemini 由 buildGeminiUrl 单独拼装
       return ENDPOINTS.GEMINI_MODELS;
@@ -306,6 +319,16 @@ export function extractCredential(
   return null;
 }
 
+/**
+ * 转发到上游时**固定使用**的 User-Agent。
+ *
+ * 客户端 UA 一律不透传 —— 有些上游/中转会按 UA 识别客户端型号做风控或能力分流,
+ * 统一成一个稳定的 Claude CLI 形态可以避免「同一把 key 换个客户端就报错」。
+ * (实测 air-outer 这类中转: Node 默认 UA 直接 401 unauthorized client)
+ * 要换版本号只改这一处; 所有上游请求(聊天转发 + 拉模型列表 + 后台测试)共用。
+ */
+export const UPSTREAM_USER_AGENT = 'claude-cli/2.1.161 (external, cli)';
+
 /** 禁止客户端覆写的头 —— account_header_override.go:29 */
 const FORBIDDEN_CLIENT_HEADERS = new Set([
   'authorization',
@@ -314,6 +337,8 @@ const FORBIDDEN_CLIENT_HEADERS = new Set([
   'api-key',
   'host',
   'content-length',
+  // 客户端 UA 不透传, 由 buildUpstreamHeaders 统一注入 UPSTREAM_USER_AGENT
+  'user-agent',
 ]);
 
 /**
@@ -334,5 +359,7 @@ export function buildUpstreamHeaders(
     out.set(k, v);
   }
   applyUpstreamAuth(out, protocol, accountType, credential);
+  // 客户端 UA 已在上面被剔除, 这里统一注入固定值(不随客户端变化)
+  out.set('user-agent', UPSTREAM_USER_AGENT);
   return out;
 }
