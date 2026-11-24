@@ -70,6 +70,8 @@ export interface CanonDelta {
   };
   /** 工具调用增量 (一条 SSE 里可能带多个工具的分片) */
   toolCalls?: { index: number; id?: string; name?: string; argumentsDelta?: string }[];
+  /** 上游主动报错 (responses 的 response.failed / 顶层 error 事件) */
+  error?: { type: string; message: string };
   /** 是否流结束 */
   done?: boolean;
 }
@@ -495,6 +497,22 @@ function openaiResponsesToCanonical(body: Record<string, unknown>): CanonRequest
         });
         continue;
       }
+      if (item['type'] === 'function_call') {
+        // 助手上一轮发起的调用: 必须挂回 assistant 消息, 否则后面的
+        // function_call_output 找不到对应 id (转 openai-chat 时会 400)
+        const call = {
+          id: str(item['call_id']) || str(item['id']) || '',
+          name: str(item['name']),
+          arguments: str(item['arguments']) || '{}',
+        };
+        const last = messages[messages.length - 1];
+        if (last && last.role === 'assistant') {
+          last.tool_calls = [...(last.tool_calls ?? []), call];
+        } else {
+          messages.push({ role: 'assistant', content: '', tool_calls: [call] });
+        }
+        continue;
+      }
       const role = item['role'] === 'assistant' ? 'assistant' : 'user';
       messages.push({ role, content: openaiContentToText(item['content']) });
     }
@@ -884,9 +902,42 @@ function canonicalToGemini(c: CanonRequest): Record<string, unknown> {
 
 function canonicalToOpenaiResponses(c: CanonRequest): Record<string, unknown> {
   const instructions = c.messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n');
-  const input = c.messages
-    .filter((m) => m.role !== 'system')
-    .map((m) => ({ role: m.role === 'tool' ? 'user' : m.role, content: m.content }));
+
+  // Responses 的 input 是**条目数组**, 不是平铺的消息数组:
+  //   助手发起的调用 -> { type:'function_call', call_id, name, arguments }
+  //   工具结果       -> { type:'function_call_output', call_id, output }
+  // 早期实现把工具结果降级成 role:'user' 的纯文本、并把 assistant.tool_calls 整段丢掉,
+  // 导致上游看不到「自己上一轮调了什么」——多轮读文件时上下文断裂, 表现为跑偏/重复/超长。
+  const input: Record<string, unknown>[] = [];
+  for (const m of c.messages) {
+    if (m.role === 'system') continue;
+
+    if (m.role === 'tool') {
+      input.push({
+        type: 'function_call_output',
+        call_id: m.tool_call_id ?? '',
+        output: m.content ?? '',
+      });
+      continue;
+    }
+
+    if (m.role === 'assistant') {
+      if (m.content) input.push({ role: 'assistant', content: m.content });
+      for (const tc of m.tool_calls ?? []) {
+        input.push({
+          type: 'function_call',
+          call_id: tc.id,
+          name: tc.name,
+          arguments: tc.arguments || '{}',
+        });
+      }
+      // 纯空轮次也要留痕, 否则对话轮次被抹掉
+      if (!m.content && !(m.tool_calls?.length)) input.push({ role: 'assistant', content: '' });
+      continue;
+    }
+
+    input.push({ role: m.role, content: m.content });
+  }
 
   const out: Record<string, unknown> = { model: c.model, input };
   if (instructions) out['instructions'] = instructions;
@@ -1270,6 +1321,8 @@ export function createSseTranslator(from: WireFormat, to: WireFormat, model: str
   const toolBlocks = new Map<number, number>();       // 工具序号 -> 块索引
   // ---- 累积式目标的工具收集 (gemini / openai-responses 没有增量工具协议) ----
   const accTools = new Map<number, { id: string; name: string; args: string }>();
+  // ---- responses 上游的 function_call 累积 (delta 分片 -> 完整参数, 供 done/output 兜底) ----
+  const respTools = new Map<number, { id: string; name: string; args: string }>();
 
   const sse = (obj: unknown, event?: string): string =>
     (event ? `event: ${event}\n` : '') + `data: ${JSON.stringify(obj)}\n\n`;
@@ -1285,14 +1338,36 @@ export function createSseTranslator(from: WireFormat, to: WireFormat, model: str
     }
   };
 
-  return {
+  /**
+   * 合成一条收尾事件 —— 用**同一个** line() 逻辑补收尾帧。
+   *
+   * 用在两个地方: 上游发 [DONE] 却不给 finish 事件; 上游直接 EOF 断流。
+   * 以前这两种情况什么都不发, 客户端等不到 message_stop, 表现就是
+   * 「跑到一半直接断掉」(长任务/大文件读取时最容易撞上)。
+   */
+  const syntheticStop = (): string => {
+    switch (from) {
+      case 'anthropic':
+        return 'data: {"type":"message_stop"}';
+      case 'gemini':
+        return 'data: {"candidates":[{"content":{"parts":[]},"finishReason":"STOP"}]}';
+      case 'openai-responses':
+        return 'data: {"type":"response.completed","response":{}}';
+      default:
+        return 'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}';
+    }
+  };
+
+  const api = {
     /** 处理上游一行 SSE; 返回要写给客户端的字节 (可能为空串) */
     line(line: string): string {
       if (!line.startsWith('data:')) return '';
       const payload = line.slice(5).trim();
       if (!payload) return '';
       if (payload === '[DONE]') {
-        return to === 'openai-chat' ? 'data: [DONE]\n\n' : '';
+        // [DONE] 只表示"上游结束", 不是收尾帧: 先补收尾再补 [DONE](顺序不能反)
+        const tail = api.end();
+        return tail + (to === 'openai-chat' ? 'data: [DONE]\n\n' : '');
       }
 
       let obj: Record<string, unknown>;
@@ -1307,11 +1382,16 @@ export function createSseTranslator(from: WireFormat, to: WireFormat, model: str
         return sse(obj);
       }
 
-      const delta = parseDelta(from, obj);
+      const delta = from === 'openai-responses' ? parseResponsesDelta(obj, respTools) : parseDelta(from, obj);
       if (delta.usage) usage = { ...usage, ...delta.usage };
-      if (!delta.text && !delta.finish && !delta.toolCalls?.length && !delta.usage && !delta.done) return '';
+      if (!delta.text && !delta.finish && !delta.toolCalls?.length && !delta.usage && !delta.done && !delta.error) {
+        return '';
+      }
 
       let out = '';
+      if (delta.error) {
+        out += sse(delta.error, to === 'anthropic' ? 'error' : undefined);
+      }
 
       if (to === 'anthropic') {
         if (!started) {
@@ -1530,7 +1610,16 @@ export function createSseTranslator(from: WireFormat, to: WireFormat, model: str
       }
       return out;
     },
+
+    /**
+     * EOF 兜底: 上游 body 结束但没给 finish 事件时补发收尾帧。
+     * 已经收过尾就返回空串(幂等)。
+     */
+    end(): string {
+      return api.line(syntheticStop());
+    },
   };
+  return api;
 }
 
 /** 把上游一个 SSE data 对象解析成规范增量 */
@@ -1592,15 +1681,9 @@ function parseDelta(from: WireFormat, o: Record<string, unknown>): CanonDelta {
   }
 
   if (from === 'openai-responses') {
-    const t = String(o['type'] ?? '');
-    if (t === 'response.output_text.delta') d.text = str(o['delta']);
-    else if (t === 'response.completed') {
-      d.finish = 'stop';
-      const r = isObj(o['response']) ? (o['response'] as Record<string, unknown>) : {};
-      const u = isObj(r['usage']) ? (r['usage'] as Record<string, unknown>) : null;
-      if (u) d.usage = { input: num(u['input_tokens']), output: num(u['output_tokens']) };
-    }
-    return d;
+    // 见 parseResponsesDelta —— responses 的事件语义和 chat 完全不同,
+    // 需要状态(参数分片累积), 所以单独一个带状态的解析器。
+    return {};
   }
 
   // openai-chat
@@ -1635,5 +1718,159 @@ function parseDelta(from: WireFormat, o: Record<string, unknown>): CanonDelta {
       cacheRead: num(u['cache_read_input_tokens']),
     };
   }
+  return d;
+}
+
+/**
+ * OpenAI Responses 的流式增量解析 (带状态)。
+ *
+ * Responses 的工具调用不是 chat 的 tool_calls 增量, 而是一串独立事件:
+ *   response.output_item.added             -> item.type='function_call', 带 call_id / name
+ *   response.function_call_arguments.delta -> 参数分片
+ *   response.function_call_arguments.done  -> 完整参数 (和已有分片重复, 只补差量)
+ *   response.output_item.done              -> 完整 item
+ *
+ * 🚨 2026-11-24 之前这里只认 output_text.delta 和 completed,
+ *    **所有工具调用被静默丢弃** —— 客户端只收到 message_start + end_turn + message_stop。
+ *    症状: 简单问答正常, 一旦要读文件/用工具就"直接断掉"。
+ */
+function parseResponsesDelta(
+  o: Record<string, unknown>,
+  acc: Map<number, { id: string; name: string; args: string }>,
+): CanonDelta {
+  const d: CanonDelta = {};
+  const t = String(o['type'] ?? '');
+
+  const slot = (idx: number): { id: string; name: string; args: string } => {
+    let s = acc.get(idx);
+    if (!s) {
+      s = { id: '', name: '', args: '' };
+      acc.set(idx, s);
+    }
+    return s;
+  };
+
+  const takeDelta = (idx: number, chunk: string): NonNullable<CanonDelta['toolCalls']> => {
+    const s = slot(idx);
+    s.args += chunk;
+    return [{ index: idx, argumentsDelta: chunk }];
+  };
+
+  if (t === 'response.output_text.delta') {
+    const text = str(o['delta']);
+    if (text) d.text = text;
+    return d;
+  }
+
+  if (t === 'response.output_item.added') {
+    const item = isObj(o['item']) ? (o['item'] as Record<string, unknown>) : null;
+    if (!item || item['type'] !== 'function_call') return d;
+    const idx = num(o['output_index']) ?? 0;
+    const s = slot(idx);
+    s.id = str(item['call_id']) || str(item['id']) || s.id;
+    s.name = str(item['name']) || s.name;
+    const tc: NonNullable<CanonDelta['toolCalls']>[number] = { index: idx };
+    if (s.id) tc.id = s.id;
+    if (s.name) tc.name = s.name;
+    // 少数实现会在 added 里就给出完整 arguments
+    const pre = str(item['arguments']);
+    if (pre && pre !== '{}') tc.argumentsDelta = pre;
+    d.toolCalls = [tc];
+    return d;
+  }
+
+  if (t === 'response.function_call_arguments.delta') {
+    const chunk = str(o['delta']);
+    if (chunk) d.toolCalls = takeDelta(num(o['output_index']) ?? 0, chunk);
+    return d;
+  }
+
+  if (t === 'response.function_call_arguments.done' || t === 'response.output_item.done') {
+    const item = isObj(o['item']) ? (o['item'] as Record<string, unknown>) : null;
+    const idx = num(o['output_index']) ?? 0;
+    const s = slot(idx);
+    if (item && item['type'] === 'function_call') {
+      s.id = str(item['call_id']) || str(item['id']) || s.id;
+      s.name = str(item['name']) || s.name;
+    }
+    const full = str(o['arguments']) || (item ? str(item['arguments']) : '');
+    // delta 已经发过的前缀不能重发, 只补差量
+    if (full.length > s.args.length) d.toolCalls = takeDelta(idx, full.slice(s.args.length));
+    return d;
+  }
+
+  if (t === 'response.completed' || t === 'response.incomplete' || t === 'response.failed') {
+    const r = isObj(o['response']) ? (o['response'] as Record<string, unknown>) : {};
+    const u = isObj(r['usage']) ? (r['usage'] as Record<string, unknown>) : null;
+    if (u) {
+      const det = isObj(u['input_tokens_details'])
+        ? (u['input_tokens_details'] as Record<string, unknown>)
+        : null;
+      d.usage = {
+        input: num(u['input_tokens']),
+        output: num(u['output_tokens']),
+        cacheRead: det ? num(det['cached_tokens']) : undefined,
+      };
+    }
+
+    if (t === 'response.failed') {
+      const err = isObj(r['error']) ? (r['error'] as Record<string, unknown>) : null;
+      d.error = {
+        type: 'upstream_error',
+        message: (err ? str(err['message']) : '') || 'upstream response failed',
+      };
+      d.finish = 'stop';
+      return d;
+    }
+
+    // 兜底: 整条流一个工具分片都没解析到时(上游省略 delta 事件), 用 output 数组整段补发,
+    // 保证工具调用一定送达客户端 —— 宁可多发, 不能丢。
+    const output = Array.isArray(r['output']) ? (r['output'] as unknown[]) : [];
+    let next = 0;
+    for (const k of acc.keys()) next = Math.max(next, k + 1);
+    for (const raw of output) {
+      if (!isObj(raw) || raw['type'] !== 'function_call') continue;
+      const callId = str(raw['call_id']) || str(raw['id']);
+      const name = str(raw['name']);
+      const args = str(raw['arguments']);
+      const dup = [...acc.values()].some((s) =>
+        callId ? s.id === callId : s.name === name && s.args === args,
+      );
+      if (dup) continue;
+      acc.set(next, { id: callId, name, args });
+      const tc: NonNullable<CanonDelta['toolCalls']>[number] = { index: next };
+      next += 1;
+      if (callId) tc.id = callId;
+      if (name) tc.name = name;
+      if (args) tc.argumentsDelta = args;
+      d.toolCalls = [...(d.toolCalls ?? []), tc];
+    }
+
+    const hasTools = acc.size > 0;
+    if (t === 'response.incomplete') {
+      const det = isObj(r['incomplete_details'])
+        ? (r['incomplete_details'] as Record<string, unknown>)
+        : null;
+      d.finish = normFinish((det ? str(det['reason']) : '') || 'length');
+    } else {
+      // 带工具调用时必须报 tool_calls -> anthropic 的 stop_reason=tool_use,
+      // 客户端才会去执行工具
+      d.finish = hasTools ? 'tool_calls' : 'stop';
+    }
+    if (hasTools && d.finish === 'stop') d.finish = 'tool_calls';
+    d.done = true;
+    return d;
+  }
+
+  if (t === 'error') {
+    const err = isObj(o['error']) ? (o['error'] as Record<string, unknown>) : null;
+    d.error = {
+      type: str(o['code']) || 'upstream_error',
+      message: (err ? str(err['message']) : '') || str(o['message']) || 'upstream error',
+    };
+    d.finish = 'stop';
+    return d;
+  }
+
   return d;
 }

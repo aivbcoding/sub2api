@@ -128,7 +128,7 @@ export function translateStreamingResponse(
   upstreamBody: ReadableStream<Uint8Array>,
   platform: Platform,
   startedAt: number,
-  translator: { line(line: string): string },
+  translator: { line(line: string): string; end?(): string },
 ): StreamResult {
   let resolveUsage!: (u: UsageTokens) => void;
   let resolveFirst!: (ms: number | null) => void;
@@ -186,6 +186,9 @@ export function translateStreamingResponse(
       let out = '';
       if (buffer.length > 0) out += handleLine(buffer);
       buffer = '';
+      // 上游 EOF 但没给收尾事件 -> 补发收尾帧, 否则客户端永远等不到 message_stop
+      // (表现: 长任务跑到一半"直接断掉", 其实是流被静默截断)
+      out += translator.end?.() ?? '';
       if (out) controller.enqueue(encoder.encode(out));
       settle();
       return undefined;

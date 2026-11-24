@@ -251,10 +251,12 @@ const server = createServer(async (req, res) => {
     }
     // 带 tools 的请求 -> 返回(并行两个)工具调用, 用于验证流式协议转换的 tool_calls 链路
     if (Array.isArray(body.tools) && body.tools.length) {
-      const tc = (i, fn) => JSON.stringify({
+      // 🚨 必须是合法的 SSE 帧 (data: 前缀)。少了这个前缀网关会按规范忽略整行,
+      //    于是 tool_calls 全丢、只剩 finish_reason —— 曾误判成网关的 bug。
+      const tc = (i, fn) => `data: ${JSON.stringify({
         id: 'c1', object: 'chat.completion.chunk', model: body.model,
         choices: [{ index: 0, delta: { tool_calls: [fn] } }],
-      });
+      })}`;
       if (body.stream) {
         res.statusCode = 200;
         res.setHeader('content-type', 'text/event-stream');
