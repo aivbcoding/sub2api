@@ -3857,6 +3857,9 @@ function overviewRender(d) {
   // 测速链接带**当前域名**(location.origin), 换了域名不用改代码。
   const origin = location.origin;
   const speedUrl = 'https://www.tcptest.cn/http/' + encodeURIComponent(origin + '/');
+  // IP 纯净度检测: 第三方站点, 打开即可测当前出口 IP 是否被风控标记为"脏IP"
+  // (机场/代理常见问题: 同一 IP 被大量复用 -> 上游判 risk, 表现为 403/封号)。
+  const ipPureUrl = 'https://ippure.com/';
   const toolPanel =
     '<div class="panel"><div class="panel-title">工具类</div>' +
       '<div class="panel-body">' +
@@ -3870,8 +3873,20 @@ function overviewRender(d) {
           '</div>' +
           '<a class="btn sm" href="' + esc(speedUrl) + '" target="_blank" rel="noopener">测速</a>' +
         '</div>' +
+        // 第二个工具组: 网络诊断。与上面用一条分隔线隔开(内联样式, 不加新 CSS)
+        '<div class="tool-row" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">' +
+          '<div class="tool-main">' +
+            '<div class="tool-head">网络诊断</div>' +
+            '<div class="tool-links">' +
+              '<a class="tool-link" href="' + esc(ipPureUrl) + '" target="_blank" rel="noopener">IP 纯净度检测 · ippure.com</a>' +
+            '</div>' +
+          '</div>' +
+          '<a class="btn sm" href="' + esc(ipPureUrl) + '" target="_blank" rel="noopener">检测</a>' +
+        '</div>' +
         '<p class="hint" style="margin-top:12px">测速会用当前域名去测第三方中转的连通与速度; ' +
-          'ccswitch 用于在客户端里一键切换本平台配置。</p>' +
+          'ccswitch 用于在客户端里一键切换本平台配置。' +
+          'IP 纯净度检测会打开 ippure.com, 用于判断本机/中转节点的出口 IP 是否被风控标记为脏 IP' +
+          '(IP 被大量复用时常导致上游 403 或封号)。</p>' +
       '</div>' +
     '</div>';
 
