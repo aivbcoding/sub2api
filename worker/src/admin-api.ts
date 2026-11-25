@@ -1237,7 +1237,40 @@ async function handleUsers(
   }
 
   if (method === 'DELETE' && id !== null) {
-    return await deleteUserCascade(env, id, auth, req);
+    const r = await deleteUserCascade(env, id, auth, req);
+    if (!r.ok) {
+      return r.code === 'self'
+        ? json({ error: { message: r.message, type: 'forbidden' } }, 400)
+        : notFound('User not found');
+    }
+    return json({ ok: true, deleted_keys: r.deleted_keys });
+  }
+
+  // 批量删除: DELETE /users { ids: [...] }
+  // 逐个走同一条级联逻辑(每个用户一条审计), 跳过"自己"和"已不存在", 最后汇总回报。
+  // 🚨 不能用软删: 保留 deleted_at 会让 api_keys / usage_logs 变孤儿(见 deleteUserCascade 注释)
+  if (method === 'DELETE' && id === null) {
+    const raw = Array.isArray(body.ids) ? body.ids : [];
+    const ids = [...new Set(
+      raw.map((x) => Number(x)).filter((n) => Number.isInteger(n) && n > 0),
+    )];
+    if (!ids.length) return badRequest('ids is required');
+
+    let deleted = 0;
+    let skippedSelf = 0;
+    let skippedMissing = 0;
+    for (const uid of ids) {
+      const r = await deleteUserCascade(env, uid, auth, req);
+      if (r.ok) deleted++;
+      else if (r.code === 'self') skippedSelf++;
+      else skippedMissing++;
+    }
+    return json({
+      ok: true,
+      deleted,
+      skipped_self: skippedSelf,
+      skipped_missing: skippedMissing,
+    });
   }
 
   return badRequest('Unsupported method');
@@ -1267,17 +1300,22 @@ async function handleUsers(
  * 🚨 追加安全: 管理员不能物理删除自己。误删自己=把自己锁在门外,
  *    而且本请求的执行上下文(会话 token 对应的用户)会变成不存在, 后续必挂。
  */
+type DeleteUserResult =
+  | { ok: true; deleted_keys: number }
+  | { ok: false; code: 'self' | 'not_found'; message: string };
+
 async function deleteUserCascade(
   env: Env,
   id: number,
   auth: AdminAuthResult,
   req: Request,
-): Promise<Response> {
+): Promise<DeleteUserResult> {
   if (auth.admin?.id === id) {
-    return json(
-      { error: { message: '不能删除当前登录的账号。如需注销, 请联系另一名超级管理员操作。', type: 'forbidden' } },
-      400,
-    );
+    return {
+      ok: false,
+      code: 'self',
+      message: '不能删除当前登录的账号。如需注销, 请联系另一名超级管理员操作。',
+    };
   }
 
   // 先取用户信息(邮箱 + 属于他的 key 列表) —— 删除前必须拿到,
@@ -1290,7 +1328,7 @@ async function deleteUserCascade(
 
   const email = String(user?.email ?? '');
   // 不存在 / 已软删(到这一步的入口本来就只查非软删, 但保持一致)
-  if (!user) return notFound('User not found');
+  if (!user) return { ok: false, code: 'not_found', message: 'User not found' };
 
   const keys = await env.DB.prepare(`SELECT id FROM api_keys WHERE user_id = ?1`)
     .bind(id)
@@ -1353,7 +1391,7 @@ async function deleteUserCascade(
     `email=${email} keys=${keyIds.length} cascade=1`,
     req,
   );
-  return json({ ok: true, deleted_keys: keyIds.length });
+  return { ok: true, deleted_keys: keyIds.length };
 }
 
 function serializeUser(row: Record<string, unknown>) {

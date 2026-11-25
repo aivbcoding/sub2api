@@ -3328,6 +3328,7 @@ PAGES.users = async () => {
         ? plats.map((p) => '<span class="tag off">' + esc(p) + '</span>').join(' ')
         : '<span class="muted">不限</span>';
       return '<tr>' +
+        '<td class="col-sel"><input type="checkbox" class="usr-row" data-id="' + u.id + '" title="选中该用户"></td>' +
         '<td>' + u.id + '</td>' +
         '<td>' + esc(u.email) + '</td>' +
         '<td>' + esc(u.username || '-') + '</td>' +
@@ -3355,8 +3356,10 @@ PAGES.users = async () => {
       (noPwd
         ? '<button class="btn warn" id="btn-fix-pwd" title="给这些用户写入默认密码的哈希, 明文不落库">补齐默认密码 (' + noPwd + ')</button>'
         : '') +
+      '<button class="btn danger" id="btn-del-users" disabled>删除选中</button>' +
       '<button class="btn primary" id="btn-new-user">新建用户</button></div></div>' +
     '<div class="panel"><div class="table-wrap"><table><thead><tr>' +
+      '<th class="col-sel"><input type="checkbox" id="u-all" title="全选本页"></th>' +
       '<th>ID</th><th>邮箱</th><th>用户名</th><th>角色</th><th>密码</th><th>余额</th><th>Key</th>' +
       '<th>平台白名单</th><th>创建时间 (UTC+8)</th><th>最近登录 (UTC+8)</th><th>状态</th><th class="ops-sticky">操作</th>' +
     '</tr></thead><tbody>' + rows + '</tbody></table></div></div>' +
@@ -3411,6 +3414,20 @@ PAGES.users = async () => {
   });
   document.querySelectorAll('[data-del-user]').forEach((el) => {
     el.addEventListener('click', () => delUser(Number(el.dataset.delUser)));
+  });
+
+  // 多选 / 全选 / 批量删除
+  bindBatchDelete({
+    rowSel: '.usr-row', allSel: '#u-all', btnSel: '#btn-del-users',
+    endpoint: '/users',
+    extraHint: '删除用户会连同他的 API Key、使用日志、签到记录、邮箱验证码一起物理删除, ' +
+      '不可恢复; 当前登录的账号会被自动跳过。删除动作会记入操作审计。',
+    successText: (r) => {
+      const n = Number((r && r.deleted) || 0);
+      const skip = Number((r && r.skipped_self) || 0) + Number((r && r.skipped_missing) || 0);
+      return '已删除 ' + n + ' 个用户' + (skip ? ', 跳过 ' + skip + ' 个(自己/已不存在)' : '');
+    },
+    reload: () => { PAGES.users(); },
   });
 };
 
@@ -5585,7 +5602,9 @@ function bindBatchDelete(o) {
       // 🚨 用户明确要求: 点删除之后必须弹窗确认, 不能直接删
       openModal('确认删除',
         '<p>确定删除选中的 <b>' + ids.length + '</b> 条记录吗?</p>' +
-        '<p class="hint muted" style="margin:8px 0 0">删除后不可恢复, 且删除动作本身会记入操作审计。</p>',
+        '<p class="hint muted" style="margin:8px 0 0">' +
+          esc(o.extraHint || '删除后不可恢复, 且删除动作本身会记入操作审计。') +
+        '</p>',
         '<button class="btn" id="m-cancel">取消</button><button class="btn danger" id="m-del">确认删除</button>');
       $('#m-cancel').addEventListener('click', closeModal);
       $('#m-del').addEventListener('click', async () => {
@@ -5594,7 +5613,9 @@ function bindBatchDelete(o) {
         try {
           const r = await api(o.endpoint, { method: 'DELETE', body: JSON.stringify({ ids }) });
           closeModal();
-          toast('已删除 ' + (r && r.deleted != null ? r.deleted : ids.length) + ' 条记录');
+          toast(o.successText
+            ? o.successText(r, ids)
+            : ('已删除 ' + (r && r.deleted != null ? r.deleted : ids.length) + ' 条记录'));
           o.reload();
         } catch (e) {
           toast(e.message, 'err');

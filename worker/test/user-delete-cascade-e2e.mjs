@@ -120,6 +120,51 @@ check('计费幂等已级联删', Number(c2.dedup) === 0, 'dedup=' + c2.dedup);
 check('签到已级联删', Number(c2.checkins) === 0, 'checkins=' + c2.checkins);
 check('验证码已级联删', Number(c2.vcodes) === 0, 'vcodes=' + c2.vcodes);
 
+// 8. 批量删除 DELETE /users { ids } —— 2026-11-25 新增「用户管理多选/全选」后台功能
+const meRes = await fetch(`${BASE}/api/admin/me`, { headers: H });
+const meId = Number((await meRes.json())?.id ?? 0);
+
+const batchIds = [];
+for (let i = 0; i < 3; i++) {
+  const r = await fetch(`${BASE}/api/admin/users`, {
+    method: 'POST', headers: H,
+    body: JSON.stringify({ email: `batch-${Date.now()}-${i}@test.com`, password: 'Test12345' }),
+  });
+  batchIds.push((await r.json()).id);
+}
+check('批量用例: 建了 3 个用户', batchIds.length === 3 && batchIds.every(Boolean), 'ids=' + batchIds.join(','));
+
+// 空体必须报错(不能默默什么都不删)
+const emptyRes = await fetch(`${BASE}/api/admin/users`, {
+  method: 'DELETE', headers: H, body: JSON.stringify({ ids: [] }),
+});
+check('批量删除空 ids -> 400', emptyRes.status === 400, 'status=' + emptyRes.status);
+
+// 混入"当前登录账号"和一个不存在的 id: 只删该删的, 自己跳过, 不存在的计入 skipped
+const mixRes = await fetch(`${BASE}/api/admin/users`, {
+  method: 'DELETE', headers: H,
+  body: JSON.stringify({ ids: [...batchIds, meId, 99999999] }),
+});
+const mixData = await mixRes.json().catch(() => ({}));
+check('批量删除返回 200', mixRes.status === 200, 'status=' + mixRes.status + ' body=' + JSON.stringify(mixData).slice(0, 160));
+check('删掉 3 个用户', Number(mixData.deleted) === 3, JSON.stringify(mixData));
+check('跳过当前登录账号', Number(mixData.skipped_self) === 1, JSON.stringify(mixData));
+check('不存在的 id 计入 skipped_missing', Number(mixData.skipped_missing) === 1, JSON.stringify(mixData));
+
+const cntBatch = (await d1(`SELECT COUNT(*) AS c FROM users WHERE id IN (${batchIds.join(',')});`))[0];
+check('3 个用户本体已删', Number(cntBatch?.c) === 0, JSON.stringify(cntBatch));
+const cntMe = (await d1(`SELECT COUNT(*) AS c FROM users WHERE id=${meId};`))[0];
+check('当前登录账号还在(没被自己删掉)', Number(cntMe?.c) === 1, JSON.stringify(cntMe));
+
+// 重复删同一批 -> deleted=0, 全部落 skipped_missing
+const againRes = await fetch(`${BASE}/api/admin/users`, {
+  method: 'DELETE', headers: H, body: JSON.stringify({ ids: batchIds }),
+});
+const againData = await againRes.json().catch(() => ({}));
+check('重复删除不再报错且 deleted=0',
+  againRes.status === 200 && Number(againData.deleted) === 0,
+  JSON.stringify(againData));
+
 rmSync(d1Dir, { recursive: true, force: true });
 console.log(fail ? `\n结果: ${fail} 项失败` : '\n结果: 全部通过');
 process.exit(fail ? 1 : 0);

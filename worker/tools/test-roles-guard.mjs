@@ -248,7 +248,22 @@ check('角色下拉会补上"已失效"的当前值', /已失效/.test(inline));
 console.log('\n[8] 用户管理 新增创建时间列');
 check('表头有创建时间', /<th>创建时间 \(UTC\+8\)<\/th>/.test(inline));
 check('单元格渲染 created_at', /fmtTime\(u\.created_at\)/.test(inline));
-check('空态 colspan 同步为 13', /colspan="13" class="empty">还没有用户/.test(inline));
+// 空态 colspan 不该写死具体数字: 加列时容易漏改(曾经锁成 13, 加了勾选列就红)。
+// 这里改成"空态 colspan 必须等于同一张表 thead 的 <th> 个数", 才是真正的不变式。
+const uAllIdx = inline.indexOf('id="u-all"');
+const thCount = uAllIdx < 0
+  ? -1
+  : (inline.slice(inline.lastIndexOf('<th', uAllIdx), inline.indexOf('</tr></thead>', uAllIdx))
+      .match(/<th[ >]/g) || []).length;
+const emptySpan = /colspan="(\d+)" class="empty">还没有用户/.exec(inline);
+check('空态 colspan 与表头列数一致',
+  !!emptySpan && Number(emptySpan[1]) === thCount,
+  `colspan=${emptySpan ? emptySpan[1] : 'missing'} th=${thCount}`);
+// 用户表必须有勾选列 + 全选框 + 批量删除按钮(2026-11-25 需求)
+check('用户表有行勾选框(.usr-row)', /class="usr-row"/.test(inline));
+check('用户表有空态之外的全选框 u-all', uAllIdx >= 0);
+check('用户页有批量删除按钮', /id="btn-del-users"/.test(inline));
+check('用户页绑定了批量删除', /rowSel: '\.usr-row'[\s\S]{0,160}endpoint: '\/users'/.test(inline));
 
 // ---------- 9. 控制台路径 = 域名根下(无 /admin 前缀) + 未登录重定向 ----------
 console.log('\n[9] 控制台路径挂在域名根下');
