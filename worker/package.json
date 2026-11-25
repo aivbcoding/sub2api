@@ -61,7 +61,8 @@
     "verify:announce": "node tools/verify-announce-online.mjs",
     "verify:apikey": "node tools/verify-apikey-format-online.mjs",
     "check:refs": "node tools/check-skill-refs.mjs",
-    "predeploy": "npm run check"
+    "predeploy": "npm run check",
+    "test:keysfilter": "node tools/run-e2e.mjs 8792 test/keys-filter-e2e.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260917.1",

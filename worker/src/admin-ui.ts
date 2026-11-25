@@ -2121,13 +2121,46 @@ PAGES.dashboard = async () => {
 const card = (k, v) => '<div class="card"><div class="k">' + esc(k) + '</div><div class="v">' + v + '</div></div>';
 
 // ======================= API Key =======================
+// 筛选状态: 空串 = 全部。放模块级是为了切走再回来仍保留条件(与 logsState 同样做法)。
+const keysState = { userId: '', groupId: '' };
+// 分组列表: 每次进页面都重拉(否则在「分组」页新建了分组, 回来下拉里没有);
+// 只有**切换筛选条件**时复用缓存, 避免重复请求。
+let keysGroupsCache = null;
+
+// 把筛选条件拼成 query string; 两个维度可叠加, 都空则不带 ?
+function keysQuery() {
+  const q = [];
+  if (keysState.userId) q.push('user_id=' + encodeURIComponent(keysState.userId));
+  if (keysState.groupId) q.push('group_id=' + encodeURIComponent(keysState.groupId));
+  return q.length ? '?' + q.join('&') : '';
+}
+
 PAGES.keys = async () => {
   const tok = navTok();
   $('#main').innerHTML = loadingHTML();
-  const [d, g] = await Promise.all([api('/api-keys'), api('/groups')]);
+  const [d, g] = await Promise.all([
+    api('/api-keys' + keysQuery()),
+    api('/groups'),
+  ]);
   if (gone(tok)) return;
+  keysGroupsCache = g;
+  keysRender(d, g);
+};
 
-  const rows = d.api_keys.length ? d.api_keys.map((k) => {
+// 筛选变化时只重建列表(不进 loadingHTML), 视觉上不闪。
+async function keysReload() {
+  const tok = navTok();
+  const d = await api('/api-keys' + keysQuery());
+  if (gone(tok)) return;
+  keysRender(d, keysGroupsCache || { groups: [] });
+}
+
+function keysRender(d, g) {
+  const list = d.api_keys || [];
+  const groups = (g && g.groups) || [];
+  const filtered = !!(keysState.userId || keysState.groupId);
+
+  const rows = list.length ? list.map((k) => {
     const st = k.status === 'active' ? '<span class="tag ok">启用</span>'
       : k.status === 'quota_exhausted' ? '<span class="tag warn">额度耗尽</span>'
       : k.status === 'expired' ? '<span class="tag warn">已过期</span>'
@@ -2145,19 +2178,49 @@ PAGES.keys = async () => {
       '<td><button class="btn sm" data-edit-key="' + k.id + '">编辑</button> ' +
           '<button class="btn sm danger" data-del-key="' + k.id + '">删除</button></td>' +
     '</tr>';
-  }).join('') : '<tr><td colspan="8" class="empty">还没有 API Key, 点右上角新建</td></tr>';
+  }).join('') : '<tr><td colspan="8" class="empty">' +
+    (filtered ? '当前筛选条件下没有 API Key' : '还没有 API Key, 点右上角新建') + '</td></tr>';
+
+  // 下拉选项: 第一项 = 全部。用 String() 比较, 避免 '' / 0 的类型坑。
+  const userOpts = '<option value="">全部用户</option>' + (d.users || []).map((u) =>
+    '<option value="' + u.id + '"' + (String(keysState.userId) === String(u.id) ? ' selected' : '') + '>' +
+    esc(u.email || u.username || ('用户 #' + u.id)) + ' (#' + u.id + ')</option>').join('');
+  const groupOpts = '<option value="">全部分组</option>' + groups.map((gr) =>
+    '<option value="' + gr.id + '"' + (String(keysState.groupId) === String(gr.id) ? ' selected' : '') + '>' +
+    esc(gr.name) + '</option>').join('');
 
   $('#main').innerHTML =
     '<div class="page-head"><h2>API Key 管理</h2><div class="actions">' +
       '<button class="btn primary" id="btn-new-key">新建 Key</button></div></div>' +
-    '<div class="panel"><div class="table-wrap"><table><thead><tr>' +
+    '<div class="panel">' +
+      // 筛选栏内嵌在表格 panel 顶部(只有两个条件, 单开一个 panel 太占地方)
+      '<div class="panel-body" style="border-bottom:1px solid var(--border)">' +
+        '<div class="filters">' +
+          '<div class="form-row"><label>所属用户</label><select id="k-user">' + userOpts + '</select></div>' +
+          '<div class="form-row"><label>分组</label><select id="k-group">' + groupOpts + '</select></div>' +
+          '<span class="muted" style="margin-left:auto;font-size:12px;align-self:center">' +
+            '共 ' + fmtNum(list.length) + ' 个 Key' + (filtered ? ' (已筛选)' : '') +
+            (list.length >= 500 ? ' · 仅最近 500 个' : '') +
+          '</span>' +
+        '</div>' +
+      '</div>' +
+      '<div class="table-wrap"><table><thead><tr>' +
       '<th>Key</th><th>名称</th><th>所属用户</th><th>分组</th><th>状态</th><th>额度(已用/上限)</th><th>最近使用 (UTC+8)</th><th>操作</th>' +
     '</tr></thead><tbody>' + rows + '</tbody></table></div></div>';
 
   $('#btn-new-key').addEventListener('click', () => keyForm(null, d, g));
+  // 两个筛选都是 change 即生效(下拉选完就查), 不需要"查询"按钮
+  $('#k-user').addEventListener('change', (e) => {
+    keysState.userId = e.target.value;
+    keysReload();
+  });
+  $('#k-group').addEventListener('change', (e) => {
+    keysState.groupId = e.target.value;
+    keysReload();
+  });
   document.querySelectorAll('[data-edit-key]').forEach((el) => {
     el.addEventListener('click', () => {
-      const k = d.api_keys.find((x) => x.id === Number(el.dataset.editKey));
+      const k = list.find((x) => x.id === Number(el.dataset.editKey));
       keyForm(k, d, g);
     });
   });
@@ -2166,11 +2229,11 @@ PAGES.keys = async () => {
   });
   document.querySelectorAll('[data-copy-key]').forEach((el) => {
     el.addEventListener('click', () => {
-      const k = d.api_keys.find((x) => x.id === Number(el.dataset.copyKey));
+      const k = list.find((x) => x.id === Number(el.dataset.copyKey));
       if (k && k.key) copyText(k.key, 'Key 已复制');
     });
   });
-};
+}
 
 function keyForm(k, d, g) {
   const isEdit = !!k;

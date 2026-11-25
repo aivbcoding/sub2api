@@ -2254,9 +2254,26 @@ async function handleApiKeys(
   req: Request,
 ): Promise<Response> {
   if (method === 'GET') {
-    // 可选按用户过滤: /api-keys?user_id=3 —— 用户页「Key」按钮用它列出单个用户名下的 Key
-    const userFilter = Number(new URL(req.url).searchParams.get('user_id') ?? '');
-    const filterByUser = Number.isInteger(userFilter) && userFilter > 0;
+    // 可选筛选, 两个维度可以叠加:
+    //   /api-keys?user_id=3      —— 用户页「Key」按钮用它列出单个用户名下的 Key
+    //   /api-keys?group_id=2     —— Key 管理页「按分组筛选」
+    //   /api-keys?user_id=3&group_id=2
+    // 🚨 参数按需拼接: 占位符编号必须跟着 binds 长度走, 不能先拼死再丢参数
+    //    (否则 D1 报 Wrong number of parameter bindings)。
+    const sp = new URL(req.url).searchParams;
+    const userFilter = Number(sp.get('user_id') ?? '');
+    const groupFilter = Number(sp.get('group_id') ?? '');
+    const conds: string[] = [];
+    const binds: unknown[] = [];
+    if (Number.isInteger(userFilter) && userFilter > 0) {
+      binds.push(userFilter);
+      conds.push(`k.user_id = ?${binds.length}`);
+    }
+    if (Number.isInteger(groupFilter) && groupFilter > 0) {
+      binds.push(groupFilter);
+      conds.push(`k.group_id = ?${binds.length}`);
+    }
+    const filterSql = conds.length ? ' AND ' + conds.join(' AND ') : '';
 
     const [rows, userRows] = await Promise.all([
       env.DB.prepare(
@@ -2264,9 +2281,9 @@ async function handleApiKeys(
          FROM api_keys k
          LEFT JOIN users u ON u.id = k.user_id
          LEFT JOIN groups g ON g.id = k.group_id
-         WHERE k.deleted_at IS NULL${filterByUser ? ' AND k.user_id = ?1' : ''}
+         WHERE k.deleted_at IS NULL${filterSql}
          ORDER BY k.id DESC LIMIT 500`,
-      ).bind(...(filterByUser ? [userFilter] : [])).all<Record<string, unknown>>(),
+      ).bind(...binds).all<Record<string, unknown>>(),
 
       // 前端「所属用户」下拉需要用户列表, 随 key 列表一起返回, 省一次请求
       env.DB.prepare(
