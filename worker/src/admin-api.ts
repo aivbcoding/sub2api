@@ -889,6 +889,32 @@ async function getSelfLogs(env: Env, auth: AdminAuthResult, req: Request): Promi
     binds.push(model);
     where.push(`l.model = ?${binds.length}`);
   }
+
+  // 日期筛选: 前端 <input type="date"> 给的是北京时间 YYYY-MM-DD。
+  // 库里 created_at 是 UTC 的 ISO 串, 所以一律按 date(col, '+8 hours') 比较 ——
+  // 与日志页 dayExpr 的 '+8 hours' 约定一致; 直接比 UTC 会整体错 8 小时。
+  const start = (url.searchParams.get('start') ?? '').trim();
+  const end = (url.searchParams.get('end') ?? '').trim();
+  const isDay = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
+  // 日期占位符记下来, 签到/额度两条 UNION 分支复用同两个参数
+  let startPh = '';
+  let endPh = '';
+  if (isDay(start)) {
+    binds.push(start);
+    startPh = `?${binds.length}`;
+  }
+  if (isDay(end)) {
+    binds.push(end);
+    endPh = `?${binds.length}`;
+  }
+  const dayConds = (col: string): string[] => {
+    const out: string[] = [];
+    if (startPh) out.push(`date(${col}, '+8 hours') >= ${startPh}`);
+    if (endPh) out.push(`date(${col}, '+8 hours') <= ${endPh}`);
+    return out;
+  };
+  where.push(...dayConds('l.created_at'));
+
   if (status === 'error') where.push(`l.model LIKE 'error:%'`);
   else if (status === 'success') where.push(`l.model NOT LIKE 'error:%'`);
   const whereSql = `WHERE ${where.join(' AND ')}`;
@@ -909,28 +935,61 @@ async function getSelfLogs(env: Env, auth: AdminAuthResult, req: Request): Promi
   // 筛选语义: 选了模型 -> 签到行不参与(它没有模型); 选「失败」-> 不参与。
   // 两表 created_at 都是 ISO 串(billing-repo 与签到都写 toISOString), 可直接排序。
   const showCheckins = !model && status !== 'error';
-  const checkinPh = `?${binds.length + 1}`;
-  const limitPh = `?${binds.length + (showCheckins ? 2 : 1)}`;
-  const offsetPh = `?${binds.length + (showCheckins ? 3 : 2)}`;
+  // 额度变动流水(管理员调整额度)共用一个开关: 同样的道理 —— 它有金额没模型,
+  // 选了具体模型或"只看失败"时不该混进来。
+  const showBalance = !model && status !== 'error';
+
+  // 两条合成分支各自的 user 占位符, 必须紧跟主 binds 之后(位置参数按顺序绑)
+  const extraBinds: unknown[] = [];
+  const nextPh = (v: unknown): string => {
+    extraBinds.push(v);
+    return `?${binds.length + extraBinds.length}`;
+  };
 
   const callsSql = `SELECT l.id AS id, l.request_id, l.created_at, l.requested_model, l.model,
               l.billing_mode,
               l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens,
               l.total_cost, l.actual_cost, l.duration_ms, l.first_token_ms,
               l.stream, l.ip_address,
-              k.name AS key_name, k.id AS key_id, k.key AS key_value
+              k.name AS key_name, k.id AS key_id, k.key AS key_value,
+              '' AS operator, 0 AS balance_after
        ${fromSql} ${whereSql}`;
 
-  const checkinSql = `SELECT -c.rowid AS id, ('checkin:' || c.day) AS request_id, c.created_at,
+  // 🚨 合成分支必须**按需拼接**: nextPh() 会往 extraBinds 里塞参数,
+  //    如果先无条件拼出 SQL 再决定用不用, 就会出现"绑了参数但 SQL 里没有占位符"
+  //    的情况 -> D1 直接报 Wrong number of parameter bindings。
+  const parts = [callsSql];
+
+  if (showCheckins) {
+    parts.push(`SELECT -c.rowid AS id, ('checkin:' || c.day) AS request_id, c.created_at,
               '' AS requested_model, '' AS model, 'checkin' AS billing_mode,
               0 AS input_tokens, 0 AS output_tokens, 0 AS cache_read_tokens, 0 AS cache_creation_tokens,
               c.amount AS total_cost, 0 AS actual_cost, 0 AS duration_ms, NULL AS first_token_ms,
               0 AS stream, '' AS ip_address,
-              NULL AS key_name, NULL AS key_id, NULL AS key_value
-       FROM user_checkins c WHERE c.user_id = ${checkinPh}`;
+              NULL AS key_name, NULL AS key_id, NULL AS key_value,
+              '' AS operator, 0 AS balance_after
+       FROM user_checkins c
+       WHERE c.user_id = ${nextPh(me.id)}${dayConds('c.created_at').map((s) => ' AND ' + s).join('')}`);
+  }
 
-  const unionSql = showCheckins ? `${callsSql} UNION ALL ${checkinSql}` : callsSql;
-  const listBinds: unknown[] = showCheckins ? [...binds, me.id] : binds;
+  // 额度流水: id 用 -(1e9 + rowid) —— 与 usage_logs 的正数 id 和签到的 -rowid 都不撞,
+  // 前端详情缓存按 id 索引, 撞了就会弹错记录。
+  if (showBalance) {
+    parts.push(`SELECT -(1000000000 + b.rowid) AS id, ('credit:' || b.id) AS request_id, b.created_at,
+              '' AS requested_model, '' AS model, 'credit' AS billing_mode,
+              0 AS input_tokens, 0 AS output_tokens, 0 AS cache_read_tokens, 0 AS cache_creation_tokens,
+              b.delta AS total_cost, 0 AS actual_cost, 0 AS duration_ms, NULL AS first_token_ms,
+              0 AS stream, '' AS ip_address,
+              NULL AS key_name, NULL AS key_id, NULL AS key_value,
+              b.operator AS operator, b.balance_after AS balance_after
+       FROM balance_logs b
+       WHERE b.user_id = ${nextPh(me.id)}${dayConds('b.created_at').map((s) => ' AND ' + s).join('')}`);
+  }
+
+  const unionSql = parts.join(' UNION ALL ');
+  const listBinds: unknown[] = [...binds, ...extraBinds];
+  const limitPh = `?${listBinds.length + 1}`;
+  const offsetPh = `?${listBinds.length + 2}`;
 
   const [rows, total, agg, models] = await Promise.all([
     env.DB.prepare(
@@ -972,6 +1031,7 @@ async function getSelfLogs(env: Env, auth: AdminAuthResult, req: Request): Promi
   return json({
     logs: (rows.results ?? []).map((r) => {
       const isCheckin = String(r.billing_mode) === 'checkin';
+      const isCredit = String(r.billing_mode) === 'credit';
       return {
         id: r.id,
         request_id: r.request_id,
@@ -982,7 +1042,14 @@ async function getSelfLogs(env: Env, auth: AdminAuthResult, req: Request): Promi
         // 签到行(见上面 UNION 说明): 金额在 total_cost, actual_cost 恒 0;
         // 只给签到行下发 credit, 普通调用行恒 0, 前端据此把「费用」列改成「+额度」。
         checkin: isCheckin,
-        credit: isCheckin ? fromMicro(r.total_cost) : 0,
+        // credit_kind: 'checkin' = 每日签到, 'admin' = 管理员调整额度; 调用行为空
+        credit_kind: isCheckin ? 'checkin' : (isCredit ? 'admin' : ''),
+        // 额度变动金额(正=增加, 负=减少); 调用行恒 0
+        credit: isCheckin || isCredit ? fromMicro(r.total_cost) : 0,
+        // 变动后的余额(只有额度流水有), 前端详情用「增加到 X 额度」
+        balance_after: isCredit ? fromMicro(r.balance_after) : null,
+        // 操作人(管理员用户名), 只有额度流水有
+        operator: String(r.operator ?? ''),
         input_tokens: r.input_tokens,
         output_tokens: r.output_tokens,
         cache_read_tokens: r.cache_read_tokens,
@@ -1138,6 +1205,7 @@ async function handleUsers(
     // 留空 = 用默认密码(不是"没密码")
     const passwordHash = await hashPassword(pwd || DEFAULT_USER_PASSWORD);
 
+    const initBalance = toMicro(body.balance ?? 0);
     const res = await env.DB.prepare(
       `INSERT INTO users (email, password_hash, role, balance, status, username, notes, platform_access)
        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
@@ -1146,7 +1214,7 @@ async function handleUsers(
         email,
         passwordHash,
         wantRole,
-        toMicro(body.balance ?? 0),
+        initBalance,
         String(body.status ?? 'active'),
         String(body.username ?? ''),
         String(body.notes ?? ''),
@@ -1155,6 +1223,14 @@ async function handleUsers(
       .run();
 
     const newId = res.meta?.last_row_id ?? 0;
+    // 建号时给了初始额度 -> 同样留一条流水(用户侧「使用日志」可见)
+    await logBalanceChange(
+      env,
+      newId,
+      initBalance,
+      initBalance,
+      auth.admin?.name || auth.admin?.email || '',
+    );
     // 审计里**永远不记密码**: 只记"用了默认密码还是管理员指定的"
     await auditLog(
       env,
@@ -1223,11 +1299,34 @@ async function handleUsers(
     binds.push(new Date().toISOString());
     binds.push(id);
 
+    // 改额度要留流水: 先取旧值, 更新后按差值记一条(见 balance_logs 注释)。
+    // 只在请求真的带 balance 时多查一次, 平时的状态/角色修改不增加查询。
+    let oldBalance: number | null = null;
+    if (body.balance !== undefined) {
+      const prev = await env.DB.prepare(
+        `SELECT balance FROM users WHERE id = ?1 AND deleted_at IS NULL`,
+      )
+        .bind(id)
+        .first<{ balance: number }>();
+      oldBalance = prev ? Number(prev.balance) : null;
+    }
+
     await env.DB.prepare(
       `UPDATE users SET ${fields.join(', ')} WHERE id = ?${binds.length}`,
     )
       .bind(...binds)
       .run();
+
+    if (oldBalance !== null && body.balance !== undefined) {
+      const newBalance = toMicro(body.balance);
+      await logBalanceChange(
+        env,
+        id,
+        newBalance - oldBalance,
+        newBalance,
+        auth.admin?.name || auth.admin?.email || '',
+      );
+    }
 
     // 审计: 把密码字段换成标记, 免得明文进日志
     const auditBody: Record<string, unknown> = { ...body };
@@ -1392,6 +1491,35 @@ async function deleteUserCascade(
     req,
   );
   return { ok: true, deleted_keys: keyIds.length };
+}
+
+/**
+ * 记一条额度变动流水 (balance_logs)。
+ *
+ * 用途: 管理员在后台改用户额度后, 用户侧的「使用日志」里能看到一条
+ * 「管理员将用户额度增加到 X 额度」的记录(见 getSelfLogs 的 UNION 分支)。
+ *
+ * 🚨 这里吞掉异常: 记流水是"附带记录", 不能因为表没迁移/写入失败就把
+ *    管理员改额度这个主流程搞失败。真出问题看 console.warn。
+ */
+async function logBalanceChange(
+  env: Env,
+  userId: number,
+  deltaMicro: number,
+  balanceAfterMicro: number,
+  operator: string,
+): Promise<void> {
+  if (!deltaMicro) return;
+  try {
+    await env.DB.prepare(
+      `INSERT INTO balance_logs (user_id, delta, balance_after, source, operator, created_at)
+       VALUES (?1, ?2, ?3, 'admin', ?4, ?5)`,
+    )
+      .bind(userId, deltaMicro, balanceAfterMicro, operator, new Date().toISOString())
+      .run();
+  } catch (e) {
+    console.warn('[balance_logs] 写入失败(不影响主流程):', String(e).slice(0, 200));
+  }
 }
 
 function serializeUser(row: Record<string, unknown>) {

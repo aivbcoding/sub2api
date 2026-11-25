@@ -4036,7 +4036,7 @@ function miniBar(ratio) {
 // ======================= 使用日志 =======================
 // 面向业务用户: **固定只看自己的调用记录**(后端按会话过滤, 没有"选用户"的入口)。
 // 列: 时间 / 令牌 / 模型 / 流 / Tokens / 费用 / 耗时 / 详情
-const logsState = { page: 1, pageSize: 50, total: 0, model: '', status: '' };
+const logsState = { page: 1, pageSize: 50, total: 0, model: '', status: '', start: '', end: '' };
 PAGES.logs = async () => {
   const tok = navTok();
   $('#main').innerHTML = loadingHTML();
@@ -4052,7 +4052,10 @@ PAGES.logs = async () => {
 async function logsFetch() {
   const qs = '?limit=' + logsState.pageSize + '&offset=' + ((logsState.page - 1) * logsState.pageSize) +
     (logsState.model ? '&model=' + encodeURIComponent(logsState.model) : '') +
-    (logsState.status ? '&status=' + logsState.status : '');
+    (logsState.status ? '&status=' + logsState.status : '') +
+    // 日期按北京时间传 YYYY-MM-DD, 后端用 date(created_at,'+8 hours') 比较
+    (logsState.start ? '&start=' + encodeURIComponent(logsState.start) : '') +
+    (logsState.end ? '&end=' + encodeURIComponent(logsState.end) : '');
   return api('/logs' + qs);
 }
 
@@ -4070,7 +4073,28 @@ function logsRender(d) {
       ' (' + fmtNum(m.count) + ')</option>')).join('');
 
   const rows = logs.length ? logs.map((l) =>
-    l.checkin
+    // 额度变动行(管理员调整额度, 见 getSelfLogs 的 UNION 分支):
+    // 老板需求 —— 记录本身要能看到「管理员将用户额度增加到 X 额度」。
+    l.credit_kind === 'admin'
+      ? (() => {
+          const up = Number(l.credit) >= 0;
+          const amount = (up ? '+' : '−') + fmtMoney(Math.abs(Number(l.credit) || 0));
+          const color = up ? '#2563eb' : '#dc2626';
+          const desc = '管理员将用户额度' + (up ? '增加到 ' : '减少到 ') +
+            fmtMoney(l.balance_after) + ' 额度';
+          return '<tr>' +
+            '<td class="muted">' + fmtTime(l.created_at) + '</td>' +
+            '<td class="muted">-</td>' +
+            '<td><span class="tag warn">额度调整</span>' +
+              '<br><span class="muted" style="font-size:11px">' + esc(desc) + '</span></td>' +
+            '<td class="muted">-</td>' +
+            '<td class="muted">-</td>' +
+            '<td style="color:' + color + ';font-weight:600">' + amount + '</td>' +
+            '<td class="muted">-</td>' +
+            '<td><button class="btn sm" data-log-detail="' + l.id + '">详情</button></td>' +
+          '</tr>';
+        })()
+      : l.checkin
       // 签到行(后端从 user_checkins 合成, 见 getSelfLogs): 模型/令牌/Tokens/耗时
       // 全空(老板需求「其他字段为空」), 费用列改成蓝色的「+额度」。
       ? '<tr>' +
@@ -4126,6 +4150,11 @@ function logsRender(d) {
           '<option value="success"' + (logsState.status === 'success' ? ' selected' : '') + '>成功</option>' +
           '<option value="error"' + (logsState.status === 'error' ? ' selected' : '') + '>失败</option>' +
         '</select></div>' +
+        // 日期筛选(北京时间): 起止都可留空; 后端按 date(created_at,'+8 hours') 比较
+        '<div class="form-row"><label>开始日期</label>' +
+          '<input id="lg-start" type="date" value="' + esc(logsState.start) + '"></div>' +
+        '<div class="form-row"><label>结束日期</label>' +
+          '<input id="lg-end" type="date" value="' + esc(logsState.end) + '"></div>' +
         '<div class="form-row"><label>每页</label><select id="lg-size">' +
           [20, 50, 100].map((n) => '<option value="' + n + '"' +
             (pageSize === n ? ' selected' : '') + '>' + n + ' 条</option>').join('') +
@@ -4154,6 +4183,13 @@ function logsRender(d) {
   $('#lg-size').addEventListener('change', (e) => {
     logsState.pageSize = Number(e.target.value) || 50; logsState.page = 1; PAGES.logs();
   });
+  // 日期: change 即生效(点日历选完就触发), 不需要额外"应用"按钮
+  $('#lg-start').addEventListener('change', (e) => {
+    logsState.start = e.target.value; logsState.page = 1; PAGES.logs();
+  });
+  $('#lg-end').addEventListener('change', (e) => {
+    logsState.end = e.target.value; logsState.page = 1; PAGES.logs();
+  });
   $('#lg-prev').addEventListener('click', () => {
     if (logsState.page > 1) { logsState.page -= 1; PAGES.logs(); }
   });
@@ -4169,6 +4205,31 @@ function logsRender(d) {
 function showLogDetail(id) {
   const l = (PAGES._logsCache || {})[id];
   if (!l) return;
+
+  // ---- 额度变动行(管理员调整额度): 详情写「管理员将用户额度增加到 X 额度」 ----
+  if (l.credit_kind === 'admin') {
+    const up = Number(l.credit) >= 0;
+    const amount = (up ? '+' : '−') + fmtMoney(Math.abs(Number(l.credit) || 0));
+    const color = up ? '#2563eb' : '#dc2626';
+    const desc = '管理员将用户额度' + (up ? '增加到 ' : '减少到 ') +
+      fmtMoney(l.balance_after) + ' 额度';
+    openModal('使用详情 #' + l.id,
+      '<p style="font-size:14px;line-height:1.9;margin:0 0 10px">' +
+        '<span class="tag warn">额度调整</span> ' + esc(desc) +
+      '</p>' +
+      '<table><tbody>' +
+        row2('详情', esc(desc)) +
+        row2('类型', '管理员调整额度') +
+        row2('变动金额', '<strong style="color:' + color + '">' + amount + '</strong>') +
+        row2('调整后余额', '<strong>' + fmtMoney(l.balance_after) + '</strong>') +
+        row2('操作管理员', esc(l.operator || '管理员')) +
+        row2('时间', fmtTime(l.created_at)) +
+        row2('记录 ID', '<span class="mono">' + esc(l.request_id || '-') + '</span>') +
+      '</tbody></table>',
+      '<button class="btn primary" id="m-close">关闭</button>');
+    $('#m-close').addEventListener('click', closeModal);
+    return;
+  }
 
   // ---- 签到行: 单独一套详情(见 getSelfLogs 的 UNION 说明) ----
   // 老板需求: 「详情设置: 每日签到成功, 增加额度 $25.0000 额度, 签到时间」。

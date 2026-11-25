@@ -229,6 +229,23 @@ CREATE TABLE IF NOT EXISTS user_checkins (
 CREATE INDEX IF NOT EXISTS idx_user_checkins_user ON user_checkins(user_id, day DESC);
 
 -- ============================================================
+-- 额度变动流水 (管理员调整额度)
+--   与 user_checkins 同理: **不写进 usage_logs**(会让调用统计带脏),
+--   展示时由 admin-api::getSelfLogs 现场 UNION 成"同形状"的行。
+--   单位微美元, 与 users.balance 一致。
+-- ============================================================
+CREATE TABLE IF NOT EXISTS balance_logs (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id       INTEGER NOT NULL,
+  delta         INTEGER NOT NULL,
+  balance_after INTEGER NOT NULL,
+  source        TEXT    NOT NULL DEFAULT 'admin',
+  operator      TEXT    NOT NULL DEFAULT '',
+  created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_balance_logs_user ON balance_logs(user_id, created_at DESC);
+
+-- ============================================================
 -- 视图: API Key 鉴权所需的聚合信息 (对照上游 GetByKey + User 预加载)
 -- ============================================================
 DROP VIEW IF EXISTS v_api_key_auth;
